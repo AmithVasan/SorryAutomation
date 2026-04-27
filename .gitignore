@@ -1,0 +1,4 @@
+.env
+apk_checksum.txt
+__pycache__/
+*.pyc

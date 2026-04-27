@@ -1,0 +1,1 @@
+ADB_PATH = "/Users/amithvasan/Library/Android/sdk/platform-tools/adb"
