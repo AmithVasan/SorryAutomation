@@ -1,6 +1,7 @@
 import time
 import logging
 from alttester import By
+from utils.ui_helpers import wait_for_safe
 
 
 # -------------------------------

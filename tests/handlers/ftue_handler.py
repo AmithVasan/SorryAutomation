@@ -1,5 +1,6 @@
 import logging
 from alttester import By
+import utils.event_tracker as event_tracker
 
 
 # -------------------------------
@@ -32,7 +33,9 @@ def handle(unity_driver, driver=None):
 
         skip_btn.tap()
 
+        event_tracker.record("FTUE", "Build FTUE", "PASS")
         logging.info("✅ FTUE skipped successfully")
 
     except Exception as e:
+        event_tracker.record("FTUE", "Build FTUE", "FAIL")
         logging.error(f"❌ FTUE handling failed: {e}")

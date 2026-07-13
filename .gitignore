@@ -2,3 +2,17 @@
 apk_checksum.txt
 __pycache__/
 *.pyc
+
+# OS / editor junk
+.DS_Store
+
+# Local Claude config & memory
+.claude/
+
+# Runtime caches (leak device IP / slack state)
+.slack_last_build_ts
+.wifi_device_ip
+
+# Generated run artifacts
+automation_report.html
+automation_report_assets/

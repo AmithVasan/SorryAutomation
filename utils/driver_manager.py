@@ -39,20 +39,20 @@ def wait_for_altserver(host="127.0.0.1", port=13000, timeout=40):
 # -------------------------------
 # CONNECT ALTTESTER
 # -------------------------------
-def connect_altunity(alt_port=13000, retries=5):
+def connect_altunity(alt_port=13000, app_name="sorry", retries=15):
     ALT_HOST = "127.0.0.1"
 
     wait_for_altserver(host=ALT_HOST, port=alt_port)
 
     for attempt in range(retries):
         try:
-            logging.info(f"AltUnity connection attempt {attempt + 1} → {ALT_HOST}:{alt_port}")
-            unity_driver = AltDriver(host=ALT_HOST, port=alt_port, app_name="sorry")
+            logging.info(f"AltUnity connection attempt {attempt + 1} → {ALT_HOST}:{alt_port} (app={app_name})")
+            unity_driver = AltDriver(host=ALT_HOST, port=alt_port, app_name=app_name)
             logging.info("✅ AltUnity connected successfully")
             return unity_driver
         except Exception as e:
             logging.warning(f"⚠️ AltUnity attempt {attempt + 1} failed: {e}")
-            time.sleep(3)
+            time.sleep(5)
 
     raise Exception("❌ AltTester connection failed after retries")
 
@@ -65,7 +65,8 @@ def set_driver(
     app_package,
     app_activity,
     alt_port=13000,
-    connect_alt=True
+    connect_alt=True,
+    app_name="sorry",
 ):
     options = UiAutomator2Options()
     options.set_capability("platformName", "Android")
@@ -74,7 +75,12 @@ def set_driver(
     options.set_capability("appPackage", app_package)
     options.set_capability("appActivity", app_activity)
     options.set_capability("noReset", True)
-    options.set_capability("newCommandTimeout", 300)
+    # Long AltTester-only tests (e.g. Happy Flow) never send an Appium command
+    # for several minutes.  A short newCommandTimeout lets the UiAutomator2
+    # server KILL the idle session, so the next Google Play purchase fails with
+    # an "invalid session id" error.  Keep it high so the session survives the
+    # whole suite; the purchase flow revives it defensively regardless.
+    options.set_capability("newCommandTimeout", 3600)
 
     logging.info("🚀 Starting Appium driver...")
 
@@ -88,6 +94,6 @@ def set_driver(
     unity_driver = None
 
     if connect_alt:
-        unity_driver = connect_altunity(alt_port)
+        unity_driver = connect_altunity(alt_port, app_name=app_name)
 
     return driver, unity_driver

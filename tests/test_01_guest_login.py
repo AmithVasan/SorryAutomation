@@ -5,10 +5,30 @@ import subprocess
 from alttester import By, AltDriver
 from utils.mongo_helper import boost_player_level
 from utils.state_manager import state
-from utils.popup_handler import wait_for_safe, safe_tap, clear_all_popups, handle_one_popup
+from utils.popup_handler import wait_for_safe, safe_tap, handle_one_popup
 from utils.device_helpers import handle_permissions
-from utils.driver_manager import get_local_ip
+from utils.helpers import get_user_snapshot
+from utils.paths import (
+    HOME_BUTTON, LOGIN_SCREEN, GUEST_BUTTON,
+    FTUE_INTRO_SKIP, FTUE_SKIP_BUTTON,
+    MATCHMAKING_SCREEN, CARD_DRAW_BUTTON,
+    INGAME_BURGER_MENU, INGAME_HUD_QUIT, QUIT_CONFIRM,
+    BUILD_ACTIVE_CARD, BUILD_INFO_SCREEN, NEXT_BUILD_CARD, BUILD_CLOSE,
+    BET_PLAY_BUTTON, BET_CLOSE,
+    PIGGY_BANK_INFO,
+)
 from config import ADB_PATH
+from tests.handlers.daily_handler import is_present as daily_login_present, handle as daily_login_handle
+from tests.handlers.album_ftue_handler import (
+    is_present as album_ftue_present,
+    handle as album_ftue_handle
+)
+from tests.handlers.beach_buddies_handler import (
+    is_present as beach_buddies_present,
+    handle as beach_buddies_handle
+)
+
+import utils.event_tracker as event_tracker
 
 PACKAGE_NAME = "com.gameberry.sorry.card.board.game"
 ACTIVITY_NAME = "com.unity3d.player.SorryUnityPlayerActivity"
@@ -17,7 +37,25 @@ APP_NAME = "sorry"
 
 
 # -------------------------------
+# SCREEN TAP HELPER
+# Some FTUE info screens require a raw "tap anywhere" to dismiss.
+# Tapping the specific element path does not register for these screens.
+# -------------------------------
+def _tap_screen_center():
+    device_id = state.get("device_id")
+    if not device_id:
+        logging.warning("⚠️ device_id not in state — cannot ADB tap")
+        return
+    subprocess.run([
+        ADB_PATH, "-s", device_id,
+        "shell", "input", "tap", "540", "1200"
+    ])
+
+
+# -------------------------------
 # RESTART + RECONNECT
+# ADB reverse port forwarding keeps device:127.0.0.1:13000 tunnelled to
+# AltTester Desktop — no IP input or manual restart tap needed.
 # -------------------------------
 def restart_and_reconnect(driver, unity_driver):
     device_id = driver.capabilities.get("udid") or driver.capabilities.get("deviceName")
@@ -32,208 +70,276 @@ def restart_and_reconnect(driver, unity_driver):
         "-n", f"{PACKAGE_NAME}/{ACTIVITY_NAME}"
     ])
 
-    logging.info("🚀 Game relaunched")
-    time.sleep(5)
-
-    try:
-        ip = get_local_ip()
-
-        subprocess.run([ADB_PATH, "-s", device_id, "shell", "input", "tap", "500", "1350"])
-        time.sleep(0.5)
-
-        subprocess.run([ADB_PATH, "-s", device_id, "shell", "input", "keyevent", "123"])
-        time.sleep(0.2)
-
-        for _ in range(25):
-            subprocess.run([ADB_PATH, "-s", device_id, "shell", "input", "keyevent", "67"])
-
-        subprocess.run([
-            ADB_PATH, "-s", device_id,
-            "shell", "input", "text", ip.replace(".", "\\.")
-        ])
-
-        subprocess.run([ADB_PATH, "-s", device_id, "shell", "input", "keyevent", "66"])
-        time.sleep(1)
-        subprocess.run([ADB_PATH, "-s", device_id, "shell", "input", "tap", "534", "1519"])
-
-        logging.info("✅ Restart tapped")
-
-    except Exception as e:
-        logging.warning(f"⚠️ AltTester popup skip: {e}")
-
-    time.sleep(6)
+    logging.info("🚀 Game relaunched — waiting for AltTester to register...")
+    time.sleep(10)
 
     try:
         unity_driver.stop()
         logging.info("🔌 Old AltTester driver closed")
-        time.sleep(1)
-    except Exception as e:
-        logging.warning(f"⚠️ Could not close old driver: {e}")
+    except Exception:
+        pass
 
-    for i in range(5):
+    for i in range(10):
         try:
             unity_driver = AltDriver(host="127.0.0.1", port=ALTTESTER_PORT, app_name=APP_NAME)
-            logging.info("✅ AltTester reconnected")
+            logging.info(f"✅ AltTester reconnected (attempt {i + 1})")
             return unity_driver
         except Exception as e:
             logging.warning(f"⚠️ Reconnect attempt {i + 1} failed: {e}")
-            time.sleep(2)
+            time.sleep(3)
 
     raise Exception("❌ AltTester reconnect failed")
-
-
-# -------------------------------
-# FAST TEXT READ (no popup clearing)
-# -------------------------------
-def fast_text(unity_driver, path, timeout=2):
-    """
-    Direct element read — no popup clearing overhead.
-    Use only when UI is stable (inside modals, HUD reads).
-    """
-    try:
-        obj = unity_driver.wait_for_object(By.PATH, path, timeout=timeout)
-        if not obj:
-            return None
-        txt = obj.get_component_property(
-            "TMPro.TextMeshProUGUI",
-            "text",
-            "Unity.TextMeshPro"
-        )
-        return txt if txt not in (None, "", "N/A") else None
-    except Exception:
-        return None
-
-
-def parse_amount(text):
-    if not text:
-        return 0
-    try:
-        text = text.strip().upper().replace(",", "").replace(" ", "")
-        multipliers = {"K": 1_000, "M": 1_000_000, "B": 1_000_000_000}
-        for suffix, mult in multipliers.items():
-            if text.endswith(suffix):
-                return int(float(text[:-1]) * mult)
-        return int(float(text))
-    except Exception:
-        return 0
-
-
-# -------------------------------
-# SNAPSHOT
-# -------------------------------
-def get_user_snapshot(unity_driver):
-    logging.info("📸 Capturing user snapshot...")
-
-    # Open profile modal
-    profile = wait_for_safe(
-        unity_driver,
-        By.PATH,
-        "/Canvas/uiLayer/TableManager/layout/viewPort/content/HomeScreen/topSections/commonHUD/root/profileSection/profileIcon/ProfileButton",
-        5
-    )
-
-    if not profile:
-        raise Exception("❌ Profile button not found")
-
-    profile.tap()
-    time.sleep(1)
-
-    # Read all profile fields using fast_text (no popup clearing)
-    player_name = fast_text(unity_driver,
-        "/Canvas/ModalLayer/SelfProfileModal(Clone)/rootMain/bgMain/Content/topSection/section-Name/playerName"
-    )
-
-    country = fast_text(unity_driver,
-        "/Canvas/ModalLayer/SelfProfileModal(Clone)/rootMain/bgMain/Content/topSection/section-Country/TextStyle_subText_medium_bold/countryNameText"
-    )
-
-    player_id = fast_text(unity_driver,
-        "/Canvas/ModalLayer/SelfProfileModal(Clone)/rootMain/bgMain/Content/topSection/TextStyle_bodyText_large_bold/playerIDText"
-    )
-
-    if player_id:
-        player_id = player_id.replace("PLAYER ID:", "").strip()
-
-    level = fast_text(unity_driver,
-        "/Canvas/ModalLayer/SelfProfileModal(Clone)/rootMain/bgMain/Content/midSection/container/progressBar/xpStar/TextStyle_Notifs/level"
-    )
-
-    xp = fast_text(unity_driver,
-        "/Canvas/ModalLayer/SelfProfileModal(Clone)/rootMain/bgMain/Content/midSection/container/progressBar/Progressbar/TextStyle_Notifs/xpProgress"
-    )
-
-    # Close profile modal
-    close = wait_for_safe(
-        unity_driver,
-        By.PATH,
-        "/Canvas/ModalLayer/SelfProfileModal(Clone)/rootMain/bgMain/SorryButtonType-Misc/touchArea",
-        3
-    )
-
-    if close:
-        close.tap()
-
-    time.sleep(0.5)
-
-    # Read HUD wallet (fast — always visible on home)
-    gold   = parse_amount(fast_text(unity_driver,
-        "/Canvas/uiLayer/TableManager/layout/viewPort/content/HomeScreen/topSections/commonHUD/root/Container/coinBar/text"
-    ))
-
-    gems   = parse_amount(fast_text(unity_driver,
-        "/Canvas/uiLayer/TableManager/layout/viewPort/content/HomeScreen/topSections/commonHUD/root/Container/gemBar/text"
-    ))
-
-    hammer = parse_amount(fast_text(unity_driver,
-        "/Canvas/uiLayer/TableManager/layout/viewPort/content/HomeScreen/topSections/commonHUD/root/Container/hammerBar/text"
-    ))
-
-    # Save to state
-    state.set_user_info("player_name", player_name)
-    state.set_user_info("country", country)
-    state.set_user_info("player_id", player_id)
-    state.set_user_info("level", int(level) if level and level.isdigit() else level)
-    state.set_user_info("xp", xp)
-    state.set_user_info("gold", gold)
-    state.set_user_info("gems", gems)
-    state.set_user_info("hammer", hammer)
-
-    # Log line by line
-    logging.info("📊 User Snapshot:")
-    logging.info(f"   👤 Name    : {player_name}")
-    logging.info(f"   🌍 Country : {country}")
-    logging.info(f"   🆔 ID      : {player_id}")
-    logging.info(f"   ⭐ Level   : {level}")
-    logging.info(f"   📈 XP      : {xp}")
-    logging.info(f"   🪙 Gold    : {gold}")
-    logging.info(f"   💎 Gems    : {gems}")
-    logging.info(f"   🔨 Hammer  : {hammer}")
 
 
 # -------------------------------
 # NAVIGATION
 # -------------------------------
 def reach_home(unity_driver, driver):
-    end = time.time() + 60
+    end = time.time() + 120  # extended — IAP can take up to 60s
 
     while time.time() < end:
         handle_permissions(driver)
+
+        handled = False
+
+        # -------------------------------
+        # DAILY LOGIN (HIGH PRIORITY)
+        # -------------------------------
+        if daily_login_present(unity_driver):
+            logging.info("🎁 Daily Login detected → Handling flow")
+            daily_login_handle(unity_driver, driver)
+            handled = True
+
+        # -------------------------------
+        # ALBUM FTUE (HIGH PRIORITY)
+        # -------------------------------
+        if album_ftue_present(unity_driver):
+            logging.info("📘 Album FTUE detected → Handling flow")
+            album_ftue_handle(unity_driver, driver)
+            handled = True
+
+        # -------------------------------
+        # BEACH BUDDIES (HIGH PRIORITY)
+        # -------------------------------
+        if beach_buddies_present(unity_driver):
+            logging.info("🏖️ Beach Buddies FTUE detected → Handling flow")
+            beach_buddies_handle(unity_driver, driver)
+            handled = True
+
+        # -------------------------------
+        # IMPORTANT FLOW HANDLED
+        # -------------------------------
+        if handled:
+            time.sleep(1)
+            continue
+
+        # -------------------------------
+        # GENERIC POPUPS
+        # -------------------------------
         handle_one_popup(unity_driver)
 
-        home = wait_for_safe(
-            unity_driver,
-            By.PATH,
-            "/Canvas/uiLayer/btmContent/lobbyBtmContent/lobbyBtmGrp/footerSection/Icons_Layout/Home/HomeIcon",
-            2
-        )
+        # -------------------------------
+        # HOME CHECK
+        # -------------------------------
+        home = wait_for_safe(unity_driver, By.PATH, HOME_BUTTON, 2)
 
         if home:
             home.tap()
-            return True
+            return unity_driver, driver  # return updated drivers
 
         time.sleep(0.5)
 
     raise Exception("❌ Failed to reach home")
+
+
+# -----------------------------------------------------------------------
+# NEW FTUE FLOW HANDLER
+# Detects the new onboarding cinematic and walks through all FTUE steps.
+# Returns once the lobby is clear and ready for normal post-login flow.
+# -----------------------------------------------------------------------
+def handle_new_ftue_flow(unity_driver, driver):
+    logging.info("🎬 New FTUE flow detected — starting guided walkthrough")
+
+    # -----------------------------------------------------------------------
+    # STEP 1 — Intro skip already tapped before this call; wait for the
+    #           transition, then tap the in-game FTUE skip button
+    # -----------------------------------------------------------------------
+    logging.info("⏳ Waiting for FTUE cinematic transition...")
+    time.sleep(3)  # allow animation to settle
+
+    logging.info("🔍 Looking for in-game FTUE skip button...")
+    ftue_skip_ingame = wait_for_safe(unity_driver, By.PATH, FTUE_SKIP_BUTTON, 10)
+    if ftue_skip_ingame:
+        safe_tap(unity_driver, ftue_skip_ingame)
+        event_tracker.record("FTUE", "Ingame FTUE", "PASS")
+        logging.info("✅ In-game FTUE skip button tapped")
+        time.sleep(2)
+    else:
+        event_tracker.record("FTUE", "Ingame FTUE", "FAIL")
+        logging.warning("⚠️ In-game FTUE skip button not found — continuing")
+
+    # -----------------------------------------------------------------------
+    # STEP 2 — Wait for matchmaking screen to appear and then disappear
+    # -----------------------------------------------------------------------
+    logging.info("⏳ Waiting for matchmaking screen...")
+    matchmaking_end = time.time() + 15
+    while time.time() < matchmaking_end:
+        mm = wait_for_safe(unity_driver, By.PATH, MATCHMAKING_SCREEN, 2)
+        if mm:
+            logging.info("🎯 Matchmaking screen detected — waiting for it to disappear...")
+            break
+        time.sleep(0.5)
+
+    # Wait for matchmaking to clear (up to 30s)
+    mm_gone_end = time.time() + 30
+    while time.time() < mm_gone_end:
+        mm = wait_for_safe(unity_driver, By.PATH, MATCHMAKING_SCREEN, 2)
+        if not mm:
+            logging.info("✅ Matchmaking screen gone")
+            break
+        time.sleep(1)
+
+    time.sleep(2)
+
+    # -----------------------------------------------------------------------
+    # STEP 3 — Card Draw button
+    # -----------------------------------------------------------------------
+    logging.info("🃏 Looking for Card Draw button...")
+    card_draw = wait_for_safe(unity_driver, By.PATH, CARD_DRAW_BUTTON, 10)
+    if card_draw:
+        safe_tap(unity_driver, card_draw)
+        logging.info("✅ Card Draw button tapped")
+        time.sleep(2)
+    else:
+        logging.warning("⚠️ Card Draw button not found — continuing")
+
+    # -----------------------------------------------------------------------
+    # STEP 4 — Burger menu → Quit → Confirm
+    # -----------------------------------------------------------------------
+    logging.info("🍔 Looking for in-game burger menu...")
+    burger = wait_for_safe(unity_driver, By.PATH, INGAME_BURGER_MENU, 10)
+    if burger:
+        safe_tap(unity_driver, burger)
+        logging.info("✅ Burger menu tapped")
+        time.sleep(1)
+
+        quit_btn = wait_for_safe(unity_driver, By.PATH, INGAME_HUD_QUIT, 5)
+        if quit_btn:
+            safe_tap(unity_driver, quit_btn)
+            logging.info("✅ Quit option tapped")
+            time.sleep(1)
+
+            confirm = wait_for_safe(unity_driver, By.PATH, QUIT_CONFIRM, 5)
+            if confirm:
+                safe_tap(unity_driver, confirm)
+                logging.info("✅ Quit confirmed")
+                time.sleep(3)
+            else:
+                logging.warning("⚠️ Quit confirm popup not found")
+        else:
+            logging.warning("⚠️ Quit option not found in menu")
+    else:
+        logging.warning("⚠️ Burger menu not found — continuing")
+
+    time.sleep(2)
+
+    # -----------------------------------------------------------------------
+    # STEP 5 — Build: Active Card → dismiss info → Next Card → dismiss info
+    #           → Close tray
+    # Info screens are "tap anywhere" screens — unconditionally tap center
+    # after each card tap (3s animation settle) instead of relying on path
+    # detection which is flaky during FTUE animations.
+    # -----------------------------------------------------------------------
+    logging.info("🏗️ Looking for Build Active Card...")
+    build_card = wait_for_safe(unity_driver, By.PATH, BUILD_ACTIVE_CARD, 10)
+    if build_card:
+        safe_tap(unity_driver, build_card)
+        logging.info("✅ Build Active Card tapped")
+        time.sleep(5)  # wait for animation + info screen to fully appear
+        _tap_screen_center()  # dismiss info screen (tap anywhere)
+        logging.info("✅ Build Info Screen tapped — waiting for it to close...")
+
+        # Confirm info screen is gone before proceeding
+        info_gone_end = time.time() + 8
+        while time.time() < info_gone_end:
+            still_open = wait_for_safe(unity_driver, By.PATH, BUILD_INFO_SCREEN, 1)
+            if not still_open:
+                logging.info("✅ Build Info Screen confirmed closed")
+                break
+            _tap_screen_center()
+            time.sleep(1)
+
+        time.sleep(1)
+
+        next_card = wait_for_safe(unity_driver, By.PATH, NEXT_BUILD_CARD, 8)
+        if next_card:
+            safe_tap(unity_driver, next_card)
+            logging.info("✅ Next Build Card tapped")
+            time.sleep(5)  # wait for animation to complete
+        else:
+            logging.warning("⚠️ Next Build Card not found — continuing")
+
+        build_close = wait_for_safe(unity_driver, By.PATH, BUILD_CLOSE, 8)
+        if build_close:
+            safe_tap(unity_driver, build_close)
+            logging.info("✅ Build tray closed")
+        else:
+            logging.warning("⚠️ Build Close not found — continuing")
+        time.sleep(2)  # wait for tray to finish closing
+    else:
+        logging.warning("⚠️ Build Active Card not found — continuing")
+
+    # -----------------------------------------------------------------------
+    # STEP 6 — Bet: Play Button → dismiss FTUE overlay → Close bet screen
+    # FTUE overlay is also a "tap anywhere" screen.
+    # -----------------------------------------------------------------------
+    logging.info("🎲 Looking for Bet Play Button...")
+    bet_play = wait_for_safe(unity_driver, By.PATH, BET_PLAY_BUTTON, 10)
+    if bet_play:
+        safe_tap(unity_driver, bet_play)
+        logging.info("✅ Bet Play Button tapped")
+        time.sleep(3)  # wait for animation + FTUE overlay to appear
+        _tap_screen_center()  # dismiss FTUE overlay (tap anywhere)
+        logging.info("✅ Bet FTUE overlay dismissed")
+        time.sleep(2)  # wait for overlay dismiss animation
+
+        bet_close = wait_for_safe(unity_driver, By.PATH, BET_CLOSE, 8)
+        if bet_close:
+            safe_tap(unity_driver, bet_close)
+            logging.info("✅ Bet screen closed")
+        else:
+            logging.warning("⚠️ Bet Close not found — continuing")
+        time.sleep(2)  # wait for bet screen to close
+    else:
+        logging.warning("⚠️ Bet Play Button not found — continuing")
+
+    time.sleep(1)
+
+    # -----------------------------------------------------------------------
+    # STEP 7 — Daily Login (if present)
+    # -----------------------------------------------------------------------
+    logging.info("🔍 Checking for Daily Login after FTUE...")
+    if daily_login_present(unity_driver):
+        logging.info("🎁 Daily Login popup detected after FTUE")
+        daily_login_handle(unity_driver, driver)
+    else:
+        logging.info("ℹ️ No Daily Login popup")
+
+    time.sleep(1)
+
+    # -----------------------------------------------------------------------
+    # STEP 8 — Piggy Bank Info Screen (if present)
+    # -----------------------------------------------------------------------
+    logging.info("🐷 Checking for Piggy Bank info screen...")
+    piggy = wait_for_safe(unity_driver, By.PATH, PIGGY_BANK_INFO, 5)
+    if piggy:
+        _tap_screen_center()  # tap anywhere screen
+        logging.info("✅ Piggy Bank info screen dismissed")
+        time.sleep(1)
+    else:
+        logging.info("ℹ️ No Piggy Bank info screen")
+
+    logging.info("✅ New FTUE flow complete")
 
 
 # -------------------------------
@@ -245,14 +351,21 @@ def test_guest_login(unity_driver, driver):
     # -------------------------------
     # LOGIN (if needed)
     # -------------------------------
-    login = wait_for_safe(unity_driver, By.PATH, "/Canvas/midUiLayer/loginScreen", 5)
+    login = wait_for_safe(
+        unity_driver,
+        By.PATH,
+        LOGIN_SCREEN,
+        5
+    )
 
     if login:
+
         logging.info("🔐 Login screen found → tapping Guest")
+
         guest = wait_for_safe(
             unity_driver,
             By.PATH,
-            "/Canvas/midUiLayer/loginScreen/buttonsParent/guestCTA/TouchArea",
+            GUEST_BUTTON,
             5
         )
 
@@ -260,14 +373,90 @@ def test_guest_login(unity_driver, driver):
             raise Exception("❌ Guest button not found")
 
         guest.tap()
-        time.sleep(1)
+
+        time.sleep(2)
+
+        # -------------------------------
+        # HANDLE ANDROID PERMISSIONS
+        # -------------------------------
+        from tests.handlers import permissions_handler
+
+        logging.info("🔍 Checking Android permissions...")
+
+        for _ in range(5):
+
+            handled = permissions_handler.handle(
+                unity_driver,
+                driver
+            )
+
+            if not handled:
+                break
+
+            time.sleep(2)
+
+        # -------------------------------
+        # NEW FTUE FLOW  (always active)
+        # Wait up to 15s — loading bar takes ~5s before intro appears.
+        # -------------------------------
+        logging.info("🎬 Following new FTUE flow...")
+
+        ftue_skip = wait_for_safe(unity_driver, By.PATH, FTUE_INTRO_SKIP, 15)
+        if ftue_skip:
+            safe_tap(unity_driver, ftue_skip)
+            event_tracker.record("FTUE", "New User FTUE", "PASS")
+            logging.info("✅ FTUE intro skip tapped")
+            time.sleep(1)
+        else:
+            logging.warning(
+                "⚠️ FTUE intro skip not found — "
+                "proceeding into FTUE flow anyway"
+            )
+
+        handle_new_ftue_flow(unity_driver, driver)
+
+        # -----------------------------------------------------------------------
+        # OLD FLOW — disabled.  To re-enable: remove the block above and
+        # uncomment everything below (restore is_new_ftue_flow logic too).
+        # -----------------------------------------------------------------------
+        # logging.info("🔍 Detecting login flow (new FTUE vs old)...")
+        # ftue_skip = wait_for_safe(unity_driver, By.PATH, FTUE_INTRO_SKIP, 15)
+        # if ftue_skip:
+        #     logging.info("🎬 New FTUE flow detected — tapping intro skip button")
+        #     safe_tap(unity_driver, ftue_skip)
+        #     event_tracker.record("FTUE", "New User FTUE", "PASS")
+        #     time.sleep(1)
+        #     is_new_ftue_flow = True
+        #     handle_new_ftue_flow(unity_driver, driver)
+        # else:
+        #     logging.info("⚡ Old login flow detected — no FTUE cinematic")
+        # -----------------------------------------------------------------------
+
     else:
         logging.info("⚡ Already logged in → skipping login screen")
 
     # -------------------------------
-    # REACH HOME + SNAPSHOT
+    # POST-LOGIN: DAILY LOGIN CHECK
+    # Covered inside handle_new_ftue_flow (step 7).
+    # Kept here commented for when old flow is re-enabled:
     # -------------------------------
-    reach_home(unity_driver, driver)
+    # if not is_new_ftue_flow:
+    #     logging.info("🔍 Checking for Daily Login popup...")
+    #     time.sleep(5)
+    #     if daily_login_present(unity_driver):
+    #         logging.info("🎁 Daily Login popup detected")
+    #         daily_login_handle(unity_driver, driver)
+    #     else:
+    #         logging.info("ℹ️ No Daily Login popup")
+
+    # -------------------------------
+    # REACH HOME (both flows)
+    # -------------------------------
+    unity_driver, driver = reach_home(unity_driver, driver)
+
+    # -------------------------------
+    # SNAPSHOT
+    # -------------------------------
     get_user_snapshot(unity_driver)
 
     player_id = state.user_info.get("player_id")
@@ -284,9 +473,10 @@ def test_guest_login(unity_driver, driver):
     # -------------------------------
     # CONDITIONAL BOOST + RESTART
     # -------------------------------
-    boosted = False
+    boosted = current_level >= 50
     if current_level >= 50:
         logging.info("⚡ Account is already boosted → skipping DB update & restart")
+
     else:
         logging.info(f"🚀 Current level {current_level} → boosting to 50")
 
@@ -294,8 +484,19 @@ def test_guest_login(unity_driver, driver):
 
         unity_driver = restart_and_reconnect(driver, unity_driver)
 
-        # After restart → reach home again
-        reach_home(unity_driver, driver)
+    # -------------------------------
+    # DAILY LOGIN CHECK AFTER RESTART
+    # -------------------------------
+    logging.info("🔍 Checking for Daily Login popup after restart...")
+    time.sleep(5)
+    if daily_login_present(unity_driver):
+        logging.info("🎁 Daily Login popup detected after restart")
+        daily_login_handle(unity_driver, driver)
+    else:
+        logging.info("ℹ️ No Daily Login popup after restart")
+
+    # After handling → go home
+    unity_driver, driver = reach_home(unity_driver, driver)
 
     # -------------------------------
     # FINAL SNAPSHOT (validation)
