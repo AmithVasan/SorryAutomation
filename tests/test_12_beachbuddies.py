@@ -101,6 +101,24 @@ def _read_event_ammo(unity):
     return parse_amount(_text(unity, BB_AMMO_EVENT, 2))
 
 
+def _read_event_ammo_settled(unity, max_expected=None, retries=8):
+    """Read the event-screen ammo counter reliably.
+
+    Right after a giftbox is collected the view is still transitioning back to
+    the event screen, so a single read of BB_AMMO_EVENT often lands before the
+    counter exists and returns 0 — which made `total_used` collapse to the full
+    starting ammo.  This waits for the event screen and retries until it gets a
+    plausible reading (>0 and, if known, not above the pre-castle ammo)."""
+    for _ in range(retries):
+        if _present(unity, BB_EVENT_BG, 1):
+            val = parse_amount(_text(unity, BB_AMMO_EVENT, 2))
+            if val and val > 0 and (max_expected is None or val <= max_expected):
+                return val
+        time.sleep(0.8)
+    # best-effort final read (may still be 0 if the screen never settled)
+    return parse_amount(_text(unity, BB_AMMO_EVENT, 2))
+
+
 def _read_castle_ammo(unity):
     return parse_amount(_text(unity, BB_AMMO_CASTLE, 2))
 
@@ -437,10 +455,13 @@ def _play_castle(unity, castle_num, summary):
         )
         break
 
-    # Total + giftbox ammo (event-screen counter shares the same ammo pool)
-    ammo_after_castle = _read_event_ammo(unity)
+    # Total + giftbox ammo (event-screen counter shares the same ammo pool as
+    # the in-castle counter).  Read it *settled* — a raw read here fires while
+    # the view is still returning to the event screen and yields 0, which made
+    # total_used wrongly equal the full starting ammo for every castle.
+    ammo_after_castle = _read_event_ammo_settled(unity, max_expected=ammo_in)
     total_used = (ammo_in - ammo_after_castle
-                  if ammo_in is not None and ammo_after_castle is not None else None)
+                  if ammo_in and ammo_after_castle else None)
     giftbox_used = None
     if total_used is not None:
         used_ms = sum(d for d in milestone_deltas if d)
@@ -480,8 +501,12 @@ def _handle_event_complete(unity, summary):
         return
 
     time.sleep(5)   # completion animation
-    r1 = _text(unity, BB_EVENT_COMPLETE_R1, 3)
-    r2 = _text(unity, BB_EVENT_COMPLETE_R2, 3)
+    # Rewards count up from 0, so a single read lands on "0"/empty and logged
+    # "—".  Use the retrying reader that skips 0 to catch the settled value.
+    # The event-complete screen is a RewardSummaryModal, so the milestone
+    # "any amountText" wildcard is a valid fallback for the first reward.
+    r1 = _text_any(unity, [BB_EVENT_COMPLETE_R1, BB_MILESTONE_AMOUNT_ANY], 3)
+    r2 = _text_any(unity, [BB_EVENT_COMPLETE_R2], 3)
     r3_cardpack = _present(unity, BB_EVENT_COMPLETE_R3_CARDPACK, 2)
 
     logging.info("🎉 [BB] EVENT COMPLETE rewards:")

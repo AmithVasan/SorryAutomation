@@ -1,3 +1,4 @@
+import os
 import logging
 import socket
 import time
@@ -39,8 +40,12 @@ def wait_for_altserver(host="127.0.0.1", port=13000, timeout=40):
 # -------------------------------
 # CONNECT ALTTESTER
 # -------------------------------
-def connect_altunity(alt_port=13000, app_name="sorry", retries=15):
-    ALT_HOST = "127.0.0.1"
+def connect_altunity(alt_port=13000, app_name="sorry", retries=15, host=None):
+    # AltTester server host. Defaults to 127.0.0.1 (server runs on THIS machine
+    # — the current local setup, unchanged). Set env SAT_ALT_HOST to a central
+    # server's LAN IP to drive a device on this laptop against a shared,
+    # licensed AltTester server elsewhere on the office LAN.
+    ALT_HOST = host or os.getenv("SAT_ALT_HOST", "127.0.0.1")
 
     wait_for_altserver(host=ALT_HOST, port=alt_port)
 

@@ -72,7 +72,7 @@ from utils.paths import (
 # -----------------------------------------------------------------------
 # CONFIG
 # -----------------------------------------------------------------------
-ADB_PATH = "/Users/amithvasan/Library/Android/sdk/platform-tools/adb"
+from config import ADB_PATH   # auto-detected (see utils/env_config.py)
 
 
 # -----------------------------------------------------------------------

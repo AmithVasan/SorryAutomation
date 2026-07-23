@@ -1,0 +1,252 @@
+/* Sorry! Automation Runner — Tier 1 theme
+   Swap the palette / background freely; nothing here affects the backend. */
+:root {
+  --bg0: #0b1020;
+  --bg1: #131a33;
+  /* per-project aurora colors — overridden live by JS on project change */
+  --bgc1: #6d8bff;
+  --bgc2: #b06dff;
+  --bgc3: #2fe08a;
+  --card: rgba(22, 28, 51, 0.72);
+  --stroke: rgba(255, 255, 255, 0.08);
+  --text: #e8ecf7;
+  --muted: #9aa6c7;
+  --accent: #6d8bff;
+  --accent2: #b06dff;
+  --run: #2fe08a;
+  --run2: #14b36b;
+  --stop: #ff5c72;
+  --ok: #2fe08a;
+  --busy: #ffcf5c;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  color: var(--text);
+  background: var(--bg0);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 32px 16px;
+}
+
+/* Animated aurora background */
+.bg-fx {
+  position: fixed;
+  inset: 0;
+  z-index: -2;
+  background:
+    radial-gradient(60vw 60vw at 15% 10%, color-mix(in srgb, var(--bgc1) 30%, transparent), transparent 60%),
+    radial-gradient(50vw 50vw at 85% 20%, color-mix(in srgb, var(--bgc2) 26%, transparent), transparent 60%),
+    radial-gradient(60vw 60vw at 50% 100%, color-mix(in srgb, var(--bgc3) 20%, transparent), transparent 60%),
+    linear-gradient(160deg, var(--bg0), var(--bg1));
+  background-size: 200% 200%;
+  animation: drift 18s ease-in-out infinite;
+  filter: saturate(1.1);
+  transition: background 0.6s ease;
+}
+@keyframes drift {
+  0%, 100% { background-position: 0% 0%, 100% 0%, 50% 100%, 0 0; }
+  50%      { background-position: 30% 20%, 70% 30%, 40% 80%, 0 0; }
+}
+
+.card {
+  width: 100%;
+  max-width: 720px;
+  background: var(--card);
+  backdrop-filter: blur(14px);
+  border: 1px solid var(--stroke);
+  border-radius: 20px;
+  padding: 26px 26px 22px;
+  box-shadow: 0 24px 70px rgba(0,0,0,0.5);
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 18px;
+}
+.head h1 {
+  font-size: 1.35rem;
+  margin: 0;
+  letter-spacing: 0.3px;
+  background: linear-gradient(90deg, var(--accent), var(--accent2));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  border: 1px solid var(--stroke);
+}
+.pill .dot { width: 9px; height: 9px; border-radius: 50%; }
+.pill-free { color: var(--ok); background: rgba(47,224,138,0.10); }
+.pill-free .dot { background: var(--ok); box-shadow: 0 0 10px var(--ok); }
+.pill-busy { color: var(--busy); background: rgba(255,207,92,0.10); }
+.pill-busy .dot { background: var(--busy); box-shadow: 0 0 10px var(--busy); animation: pulse 1s infinite; }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+.form { display: flex; flex-direction: column; gap: 16px; }
+.field { display: flex; flex-direction: column; gap: 6px; }
+.field > span { font-size: 0.78rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.6px; }
+
+select {
+  appearance: none;
+  background: rgba(10,14,28,0.75);
+  color: var(--text);
+  border: 1px solid var(--stroke);
+  border-radius: 12px;
+  padding: 11px 14px;
+  font-size: 0.95rem;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(109,139,255,0.25); }
+
+.seg { display: flex; gap: 18px; }
+.seg label { display: inline-flex; align-items: center; gap: 7px; font-size: 0.92rem; cursor: pointer; }
+
+.toggles { display: flex; gap: 26px; flex-wrap: wrap; padding-top: 2px; }
+.switch { display: inline-flex; align-items: center; gap: 10px; cursor: pointer; }
+.switch input { display: none; }
+.switch .track {
+  width: 44px; height: 24px; border-radius: 999px;
+  background: rgba(255,255,255,0.12); position: relative; transition: background 0.2s;
+}
+.switch .track::after {
+  content: ""; position: absolute; top: 3px; left: 3px;
+  width: 18px; height: 18px; border-radius: 50%; background: #fff; transition: transform 0.2s;
+}
+.switch input:checked + .track { background: linear-gradient(90deg, var(--accent), var(--accent2)); }
+.switch input:checked + .track::after { transform: translateX(20px); }
+.switch .lbl { font-size: 0.92rem; }
+
+.actions { display: flex; gap: 12px; align-items: center; margin-top: 6px; }
+.btn {
+  border: none; border-radius: 12px; padding: 12px 20px;
+  font-size: 0.95rem; font-weight: 700; cursor: pointer;
+  text-decoration: none; display: inline-flex; align-items: center;
+  transition: transform 0.12s, box-shadow 0.2s, opacity 0.2s;
+}
+.btn:active { transform: translateY(1px) scale(0.99); }
+.btn-run {
+  color: #06231a;
+  background: linear-gradient(90deg, var(--run), var(--run2));
+  box-shadow: 0 8px 24px rgba(47,224,138,0.35);
+}
+.btn-run:hover:not(:disabled) { box-shadow: 0 10px 30px rgba(47,224,138,0.55); }
+.btn-run:disabled { opacity: 0.45; cursor: not-allowed; box-shadow: none; }
+.btn-stop { color: #fff; background: rgba(255,92,114,0.18); border: 1px solid var(--stop); }
+.btn-stop:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn-ghost { color: var(--muted); background: transparent; border: 1px solid var(--stroke); font-weight: 600; }
+.btn-ghost.disabled { opacity: 0.4; pointer-events: none; }
+
+.status-bar {
+  display: flex; justify-content: space-between; align-items: center;
+  margin: 18px 0 10px; font-size: 0.9rem; color: var(--muted);
+}
+.timer { font-variant-numeric: tabular-nums; }
+
+.console { border: 1px solid var(--stroke); border-radius: 14px; overflow: hidden; }
+.console-head {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 9px 14px; background: rgba(10,14,28,0.6);
+  font-size: 0.8rem; color: var(--muted); letter-spacing: 0.5px;
+}
+.autoscroll { display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
+.log {
+  margin: 0; padding: 14px; height: 320px; overflow-y: auto;
+  background: #05070f; color: #cdd6f4;
+  font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  font-size: 0.82rem; line-height: 1.5; white-space: pre-wrap; word-break: break-word;
+}
+
+.hidden { display: none !important; }
+
+/* project "setup pending" note */
+.note {
+  margin: -8px 0 0; font-size: 0.82rem; color: var(--busy);
+  background: rgba(255,207,92,0.08); border: 1px solid rgba(255,207,92,0.25);
+  padding: 8px 12px; border-radius: 10px;
+}
+
+/* console header: left (title + history) / right (autoscroll + copy) */
+.console-head { gap: 12px; flex-wrap: wrap; }
+.console-left, .console-right { display: inline-flex; align-items: center; gap: 12px; }
+.hist-label { font-size: 0.72rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
+.history {
+  appearance: none; background: rgba(10,14,28,0.75); color: var(--text);
+  border: 1px solid var(--stroke); border-radius: 8px; padding: 4px 10px;
+  font-size: 0.78rem; max-width: 320px; outline: none; cursor: pointer;
+}
+.history:focus { border-color: var(--accent); }
+.mini-btn {
+  background: rgba(255,255,255,0.06); color: var(--text);
+  border: 1px solid var(--stroke); border-radius: 8px; padding: 4px 12px;
+  font-size: 0.78rem; cursor: pointer; transition: background 0.15s, border-color 0.15s;
+}
+.mini-btn:hover { background: rgba(255,255,255,0.12); border-color: var(--accent); }
+
+/* read-only banner shown while viewing a past run */
+.ro-banner {
+  padding: 8px 14px; font-size: 0.82rem; color: var(--busy);
+  background: rgba(255,207,92,0.10); border-bottom: 1px solid var(--stroke);
+}
+.ro-banner a { color: var(--accent); text-decoration: none; font-weight: 600; }
+.ro-banner a:hover { text-decoration: underline; }
+
+/* Remote agents panel */
+.agents-panel { margin: 6px 0 14px; }
+.agents-head { font-size: 0.78rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 8px; }
+.agents-head .hint { text-transform: none; letter-spacing: 0; opacity: 0.7; }
+.agent-empty { font-size: 0.85rem; color: var(--muted); padding: 8px 0; }
+.agent-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 8px 12px; margin-bottom: 6px;
+  background: rgba(10,14,28,0.55); border: 1px solid var(--stroke); border-radius: 12px;
+}
+.agent-dot { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto; background: var(--muted); }
+.agent-dot.idle { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+.agent-dot.busy { background: var(--busy); box-shadow: 0 0 8px var(--busy); animation: pulse 1s infinite; }
+.agent-dot.offline { background: #5a6480; }
+.agent-name { font-weight: 600; }
+.agent-dev { color: var(--muted); font-size: 0.85rem; font-family: "SF Mono", Menlo, monospace; }
+.agent-st { color: var(--muted); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.5px; margin-left: auto; }
+.mini-btn.run {
+  color: #06231a; background: linear-gradient(90deg, var(--run), var(--run2)); border: none; font-weight: 700;
+}
+.mini-btn.run:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* Optional per-project background image layer (sits above the gradient).
+   Cross-browser + all screens: a fixed full-viewport layer with cover sizing
+   (NOT background-attachment:fixed, which is buggy on iOS). Hidden until an
+   image is found for the project; a dark scrim keeps the UI readable. */
+.bg-image {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  opacity: 0;
+  transition: opacity 0.6s ease;
+}
+body.has-bg-image .bg-image { opacity: 1; }
+body.has-bg-image .bg-image::after {   /* readability scrim over the image */
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(160deg, rgba(11,16,32,0.82), rgba(11,16,32,0.66));
+}

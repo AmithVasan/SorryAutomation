@@ -303,6 +303,19 @@ def purchase_season_pass(
                 "❌ Buy button not found"
             )
 
+        # ---------------------------------------------------
+        # LOG PRICE (before buying)
+        # ---------------------------------------------------
+        sp_price = fast_text(
+            unity_driver,
+            "/Canvas/ModalLayer/SeasonPassPurchaseModal(Clone)/rootMain/Layout"
+            "/TopPivotContainer/rewardsSection/SorryButtonType-Currency/root"
+            "/textContainer/priceText",
+        )
+        logging.info(
+            f"💵 Season Pass price: {sp_price or '—'}"
+        )
+
         safe_tap(unity_driver, buy_btn)
 
         logging.info(
@@ -340,6 +353,10 @@ def purchase_season_pass(
                 connect_alt=False
             )
 
+            # Keep shared state in sync with the reconnected Appium session so
+            # popup handlers / later tests don't pick up the dead one.
+            state.set("appium_driver", driver)
+
             logging.info(
                 "✅ Appium reconnected"
             )
@@ -349,6 +366,10 @@ def purchase_season_pass(
         # ---------------------------------------------------
 
         purchase_success, driver = handle_google_play_purchase(driver)
+
+        # handle_google_play_purchase may hand back a fresh Appium session
+        # (UiAutomator2 can crash & reconnect mid-purchase) — sync state.
+        state.set("appium_driver", driver)
 
         if not purchase_success:
 
@@ -362,6 +383,7 @@ def purchase_season_pass(
 
             try:
                 unity_driver = reconnect_alttester(unity_driver)
+                state.set("unity_driver", unity_driver)
                 modal_check = wait_for_safe(
                     unity_driver,
                     By.PATH,
@@ -458,6 +480,7 @@ def purchase_season_pass(
         # ---------------------------------------------------
 
         unity_driver = reconnect_alttester(unity_driver)
+        state.set("unity_driver", unity_driver)
 
         logging.info("✅ AltTester reconnected after purchase")
 
@@ -605,6 +628,89 @@ def claim_tier1(unity_driver):
 
 
 # ---------------------------------------------------
+# FINALIZE: clear leftover reward screens → close Season Pass → lobby
+# ---------------------------------------------------
+def _finalize_and_return_home(unity_driver):
+    """Mop up any remaining reward screen, then close the Season Pass modal and
+    land on the lobby.
+
+    Runs after the reward-clearing loop regardless of how that loop ended
+    (all-clear, timeout, or a stalled AltTester call that ate the budget).
+    Reward screens overlay the Season Pass modal, so they are always cleared
+    FIRST; only when none remain is SEASON_PASS_CLOSE tapped, and the tap is
+    verified. This handles any number of lootboxes (e.g. a late 4th) and
+    guarantees we never stay stuck on the Season Pass screen.
+    """
+    logging.info("🔚 Finalizing — clearing leftover reward screens, then closing Season Pass")
+    end = time.time() + 240
+    idle_passes = 0
+
+    while time.time() < end:
+        # 1. Reward Summary (overlays everything)
+        obj = wait_for_safe(unity_driver, By.PATH, REWARD_SUMMARY_CTA, 2)
+        if obj:
+            time.sleep(2)
+            safe_tap(unity_driver, obj)
+            logging.info("   ✅ [finalize] Reward Summary dismissed")
+            time.sleep(2)
+            idle_passes = 0
+            continue
+
+        # 2. Pawn Rewards
+        if wait_for_safe(unity_driver, By.PATH, PAWN_REWARDS_MODAL, 2):
+            btn = (wait_for_safe(unity_driver, By.PATH, PAWN_REWARDS_EQUIP, 3)
+                   or wait_for_safe(unity_driver, By.PATH, PAWN_REWARDS_CONTINUE, 3))
+            if btn:
+                safe_tap(unity_driver, btn)
+                logging.info("   ✅ [finalize] Pawn Rewards dismissed")
+            time.sleep(2)
+            idle_passes = 0
+            continue
+
+        # 3. Lootbox (tap-to-continue) — any number
+        lb = wait_for_safe(unity_driver, By.PATH, LOOTBOX_CLAIM, 2)
+        if lb:
+            time.sleep(1)
+            safe_tap(unity_driver, lb)
+            logging.info("   ✅ [finalize] Lootbox dismissed")
+            time.sleep(1.5)
+            idle_passes = 0
+            continue
+
+        # 4. No reward screen showing → close the Season Pass modal
+        sp_close = wait_for_safe(unity_driver, By.PATH, SEASON_PASS_CLOSE, 2)
+        if sp_close:
+            safe_tap(unity_driver, sp_close)
+            logging.info("✅ Season Pass close tapped")
+            time.sleep(2)
+            if not wait_for_safe(unity_driver, By.PATH, SEASON_PASS_CLOSE, 2):
+                logging.info("✅ Season Pass modal closed")
+                home_btn = wait_for_safe(unity_driver, By.PATH, HOME_BUTTON, 5)
+                if home_btn:
+                    safe_tap(unity_driver, home_btn)
+                    time.sleep(2)
+                logging.info("✅ Returned to lobby after claim all")
+                return True
+            # close didn't take (a reward screen may have popped in) → re-loop
+            idle_passes = 0
+            continue
+
+        # 5. Neither a reward screen nor the SP close button — maybe already home
+        if wait_for_safe(unity_driver, By.PATH, HOME_BUTTON, 2):
+            logging.info("✅ Already on lobby")
+            return True
+
+        idle_passes += 1
+        if idle_passes >= 4:
+            logging.warning("⚠️ [finalize] Nothing actionable after several passes — stopping")
+            return False
+        time.sleep(1)
+
+    logging.warning("⚠️ [finalize] Timed out closing Season Pass")
+    return False
+
+
+# ---------------------------------------------------
 # CLAIM ALL
 # ---------------------------------------------------
 
@@ -658,9 +764,21 @@ def claim_all(unity_driver):
         pawn_count    = 0
         lootbox_count = 0
         summary_count = 0
-        safety_end    = time.time() + 120  # hard cap
 
-        while time.time() < safety_end:
+        # Reward screens can appear in unbounded numbers (4 lootboxes today,
+        # possibly more in a future season pass).  A fixed wall-clock cap runs
+        # out mid-clear.  Instead use a rolling "no-progress" deadline: every
+        # time we dismiss a screen we push the deadline out.  We only give up
+        # if NOTHING is dismissed for NO_PROGRESS_TIMEOUT seconds (genuinely
+        # stuck), with a generous absolute ceiling as a final infinite-loop
+        # guard.  This scales to any number of lootboxes.
+        NO_PROGRESS_TIMEOUT = 60     # secs allowed with zero screens dismissed
+        ABSOLUTE_CAP        = 900    # secs hard ceiling (safety net)
+
+        absolute_end    = time.time() + ABSOLUTE_CAP
+        no_progress_end = time.time() + NO_PROGRESS_TIMEOUT
+
+        while time.time() < no_progress_end and time.time() < absolute_end:
 
             # --- Reward Summary Modal (can appear multiple times) ---
             reward_summary = wait_for_safe(
@@ -675,6 +793,7 @@ def claim_all(unity_driver):
                     f"   ✅ Reward Summary #{summary_count} tapped — collecting rewards"
                 )
                 time.sleep(1)
+                no_progress_end = time.time() + NO_PROGRESS_TIMEOUT  # made progress
                 continue  # re-check from top
 
             # --- Pawn Rewards Modal ---
@@ -721,13 +840,24 @@ def claim_all(unity_driver):
                         break
                     time.sleep(0.5)
                 time.sleep(1)
+                no_progress_end = time.time() + NO_PROGRESS_TIMEOUT  # made progress
                 continue  # re-check from top
 
-            # --- Lootbox Reward Screen (can appear multiple times) ---
+            # --- Lootbox Reward Screen — DRAIN consecutive ones (speed) ---
+            # EXPERIMENT: dismiss ALL back-to-back lootboxes here instead of
+            # returning to the top after each. The top-of-loop Summary and Pawn
+            # "absent" checks each cost ~15-18s of AltTester latency while a
+            # reward screen is up, so paying them once PER lootbox was the bulk
+            # of the ~3 min clear time. Draining pays them once instead of
+            # once-per-lootbox. Safety is unchanged: a non-lootbox screen ends
+            # the drain and falls back to the full scan, and the finalizer mops
+            # up anything missed. Revert this block to restore the old behavior.
             lootbox_screen = wait_for_safe(
                 unity_driver, By.PATH, LOOTBOX_CLAIM, 3
             )
-            if lootbox_screen:
+            drained_any = False
+            while lootbox_screen and time.time() < absolute_end:
+                drained_any = True
                 time.sleep(2)  # let animation settle before tap
                 safe_tap(unity_driver, lootbox_screen)
                 lootbox_count += 1
@@ -743,56 +873,34 @@ def claim_all(unity_driver):
                         break
                     time.sleep(0.5)
                 time.sleep(0.5)
-                continue  # re-check from top
+                no_progress_end = time.time() + NO_PROGRESS_TIMEOUT  # made progress
+                # peek for the next lootbox: present → fast, absent → ends drain
+                lootbox_screen = wait_for_safe(
+                    unity_driver, By.PATH, LOOTBOX_CLAIM, 3
+                )
+            if drained_any:
+                continue  # re-scan from top (Summary/Pawn may appear after)
 
-            # --- All three absent → thorough cleanup before closing SP ---
+            # --- All three absent on this pass → bulk clearing done, exit ---
             logging.info(
-                f"✅ All reward screens cleared "
+                f"✅ Reward screens cleared "
                 f"(Summary: {summary_count} | Pawn: {pawn_count} | "
-                f"Lootbox: {lootbox_count}) → final cleanup before closing Season Pass"
+                f"Lootbox: {lootbox_count})"
             )
-
-            consecutive_clean = 0
-            cleanup_end = time.time() + 30
-            while time.time() < cleanup_end:
-                handled = handle_one_popup(unity_driver)
-                if not handled:
-                    handled = run_handlers(unity_driver)
-                if not handled:
-                    consecutive_clean += 1
-                    if consecutive_clean >= 2:
-                        break
-                    time.sleep(0.5)
-                else:
-                    consecutive_clean = 0
-                    time.sleep(1)
-
-            logging.info("✅ Final cleanup done — closing Season Pass modal")
-
-            sp_close = wait_for_safe(
-                unity_driver, By.PATH, SEASON_PASS_CLOSE, 5
-            )
-            if sp_close:
-                safe_tap(unity_driver, sp_close)
-                logging.info("✅ Season Pass modal closed")
-                time.sleep(2)
-
-            home_btn = wait_for_safe(
-                unity_driver, By.PATH, HOME_BUTTON, 5
-            )
-            if home_btn:
-                safe_tap(unity_driver, home_btn)
-                logging.info("✅ Navigated home after claim all")
-                time.sleep(2)
-                break
-
-            logging.info("⏳ Waiting for lobby transition — re-checking...")
-            time.sleep(1)
+            break
 
         else:
             logging.warning(
-                "⚠️ Safety cap reached — could not fully clear all reward screens"
+                f"⚠️ Reward clearing loop stopped — no new screen dismissed for "
+                f"{NO_PROGRESS_TIMEOUT}s (or {ABSOLUTE_CAP}s absolute cap hit). "
+                f"Cleared so far → Summary: {summary_count} | Pawn: {pawn_count} "
+                f"| Lootbox: {lootbox_count}. Finalizer will mop up the rest."
             )
+
+        # Runs regardless of how the loop above ended (break OR timeout): clear
+        # any reward screen still showing (e.g. a late 4th lootbox) with a fresh
+        # budget, then close the Season Pass modal and return to the lobby.
+        _finalize_and_return_home(unity_driver)
 
     finally:
         # Always re-enable — POPUP_PRIORITY resumes auto-closing the modal
@@ -999,10 +1107,31 @@ def test_season_pass(
         restart_game()
 
         # ---------------------------------------------------
-        # RECONNECT ALTTESTER
+        # RECONNECT ALTTESTER (after a full restart)
+        #
+        # restart_game() force-stops and COLD-launches the app.  A cold start
+        # during a complete run (heavy state + more live-ops to reload) can
+        # take longer to re-register with AltTester than reconnect_alttester()'s
+        # short 10×2s budget allows — the relay then keeps replying
+        #   "No app connected that has the given tags. - goodbye"
+        # until it gives up and Season Pass fails.  Individually the cold start
+        # is lighter and re-registers in time, which is why it only fails in a
+        # complete run.  Use the SAME patient connector the suite uses at
+        # startup (waits for the Desktop relay + 15×5s connect retries) so the
+        # app has time to re-register its tags.
         # ---------------------------------------------------
 
-        unity_driver = reconnect_alttester(unity_driver)
+        try:
+            unity_driver.stop()
+        except Exception:
+            pass
+
+        from utils.driver_manager import connect_altunity
+        unity_driver = connect_altunity(alt_port=13000, app_name="sorry")
+
+        # Publish the fresh driver so popup handlers invoked during claim-all /
+        # post-claim clearing (run_handlers) don't use the dead connection.
+        state.set("unity_driver", unity_driver)
 
         time.sleep(5)
 
@@ -1235,7 +1364,8 @@ def test_season_pass(
                 time.time() - start_time,
                 2
             ),
-            "steps": steps
+            "steps": steps,
+            "unity_driver": unity_driver
         }
 
     except Exception as e:
@@ -1256,5 +1386,6 @@ def test_season_pass(
                 time.time() - start_time,
                 2
             ),
-            "steps": steps
+            "steps": steps,
+            "unity_driver": unity_driver
         }

@@ -1,31 +1,23 @@
 import os
+from utils.env_config import (
+    detect_adb, detect_appium, detect_emulator, detect_apk_folder,
+)
 
 # -------------------------------
-# PATHS
+# PATHS  (auto-detected; env var or the original Mac path still win — see
+# utils/env_config.py. Zero config needed on a laptop with the Android SDK.)
 # -------------------------------
-APK_FOLDER = os.environ.get(
-    "APK_FOLDER",
-    "/Users/amithvasan/Downloads/Testing Build"
-)
+APK_FOLDER = detect_apk_folder()
 
-ADB_PATH = os.environ.get(
-    "ADB_PATH",
-    "/Users/amithvasan/Library/Android/sdk/platform-tools/adb"
-)
+ADB_PATH = detect_adb()
 
-APPIUM_PATH = os.environ.get(
-    "APPIUM_PATH",
-    "/usr/local/bin/appium"
-)
+APPIUM_PATH = detect_appium()
 
 # -------------------------------
 # EMULATOR
 # -------------------------------
 EMULATOR_NAME = os.environ.get("EMULATOR_NAME", "Tab")
-EMULATOR_PATH = os.environ.get(
-    "EMULATOR_PATH",
-    "/Users/amithvasan/Library/Android/sdk/emulator/emulator"
-)
+EMULATOR_PATH = detect_emulator()
 
 # -------------------------------
 # APP

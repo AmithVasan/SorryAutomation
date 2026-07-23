@@ -40,7 +40,7 @@ def boost_player_level(
     level=50,
     gold=5000,
     gems=1050,
-    hammer=30000,
+    hammer=3000,
     name="NOOB"
 ):
     if not player_id:
@@ -176,6 +176,53 @@ def set_beach_buddies_ammo(player_id, ammo=3000):
 
     except Exception as e:
         logging.error(f"❌ Mongo error in set_beach_buddies_ammo: {e}")
+        return False
+
+
+# -------------------------------
+# TREASURE ISLAND (Fortune Island) — TOP UP EVENT AMMO
+# -------------------------------
+def set_treasure_island_ammo(player_id, ammo=900):
+    """
+    Set the Treasure Island (Fortune Island) available ammo for a player.
+
+    Writes frtnIslndDt.ammCnt so there are enough chest opens to finish the
+    event.  (ammCnt sits directly under frtnIslndDt — a sibling of `data`, NOT
+    inside it.)  Call this while the game is KILLED, then launch, so the boosted
+    value is loaded fresh and not overwritten by the running game.
+
+    Returns True on success, False otherwise.
+    """
+    if not player_id:
+        logging.warning("⚠️ set_treasure_island_ammo called with empty player_id")
+        return False
+
+    try:
+        db = get_client()[DB_NAME]
+        collection = db[COLLECTION_NAME]
+
+        user = collection.find_one({"info.gameCode": player_id})
+        old_ammo = (
+            user.get("frtnIslndDt", {}).get("ammCnt", 0) if user else 0
+        )
+
+        result = collection.update_one(
+            {"info.gameCode": player_id},
+            {"$set": {"frtnIslndDt.ammCnt": ammo}},
+        )
+
+        if result.matched_count == 0:
+            logging.warning(f"⚠️ Player {player_id} not found — cannot set TI ammo")
+            return False
+
+        logging.info(
+            f"🏝️ Treasure Island ammo set → frtnIslndDt.ammCnt: "
+            f"{old_ammo} → {ammo} (player {player_id})"
+        )
+        return True
+
+    except Exception as e:
+        logging.error(f"❌ Mongo error in set_treasure_island_ammo: {e}")
         return False
 
 

@@ -21,13 +21,32 @@ from tests.test_registry import TEST_REGISTRY
 from datetime import datetime
 
 
+# --- HTTPS CERTS ---
+# Fresh framework Python builds (macOS python.org, and many clean installs) ship
+# WITHOUT a default CA file, so slack_sdk's urllib uploads fail with
+# "CERTIFICATE_VERIFY_FAILED". Point SSL at certifi's bundle if nothing is set —
+# fixes Slack report uploads on every laptop with no manual cert install.
+try:
+    import certifi as _certifi
+    os.environ.setdefault("SSL_CERT_FILE", _certifi.where())
+except Exception:
+    pass
+
+
 # --- CONFIG ---
-APK_FOLDER = "/Users/amithvasan/Downloads/Testing Build"
-ADB_PATH = "/Users/amithvasan/Library/Android/sdk/platform-tools/adb"
-APPIUM_PATH = "/usr/local/bin/appium"
+# Toolchain paths are auto-detected so the suite runs on any laptop with the
+# Android SDK, with no manual input. Env vars (SAT_ADB / ADB_PATH, etc.) or the
+# original Mac paths still take precedence — see utils/env_config.py.
+from utils.env_config import (
+    detect_adb, detect_appium, detect_emulator, detect_apk_folder,
+)
+
+APK_FOLDER = detect_apk_folder()
+ADB_PATH = detect_adb()
+APPIUM_PATH = detect_appium()
 
 EMULATOR_NAME = "Tab"
-EMULATOR_PATH = "/Users/amithvasan/Library/Android/sdk/emulator/emulator"
+EMULATOR_PATH = detect_emulator()
 
 PACKAGE_NAME = "com.gameberry.sorry.card.board.game"
 ACTIVITY_NAME = "com.unity3d.player.SorryUnityPlayerActivity"
@@ -514,7 +533,38 @@ def install_apk(device_id):
 # -------------------------------
 # LAUNCH GAME
 # -------------------------------
+def keep_screen_awake(device_id):
+    """Stop the device screen from timing out / locking mid-run.
+
+    A screen lock during a long 'complete' run steals focus and taps from the
+    game, causing spurious test failures.  We apply three layers:
+      • stay_on_while_plugged_in = 7  → never sleep on AC/USB/wireless charging
+      • screen_off_timeout = max      → effectively never sleep (WiFi devices
+                                         that aren't charging)
+      • svc power stayon true         → keep the screen on while powered
+    Then wake + unlock the screen so we start from an interactive state.
+    """
+    cmds = [
+        ["settings", "put", "global", "stay_on_while_plugged_in", "7"],
+        ["settings", "put", "system", "screen_off_timeout", "2147483647"],
+        ["svc", "power", "stayon", "true"],
+        ["input", "keyevent", "KEYCODE_WAKEUP"],
+        ["wm", "dismiss-keyguard"],
+    ]
+    for c in cmds:
+        try:
+            subprocess.run(
+                [ADB_PATH, "-s", device_id, "shell", *c],
+                check=False, timeout=10
+            )
+        except Exception as e:
+            logging.warning(f"⚠️ keep_screen_awake ({' '.join(c)}) failed: {e}")
+    logging.info("🔆 Screen sleep/lock disabled for this run")
+
+
 def launch_game(device_id):
+    keep_screen_awake(device_id)
+
     logging.info("🎮 Launching game...")
 
     subprocess.run([
@@ -690,22 +740,44 @@ def run_all_tests(
     
             try:
                 result = test_func(unity_driver, driver)
-    
-                # allow tests to refresh unity driver
-                if result is not None and hasattr(result, 'wait_for_object'):
+
+                # Tests report back in one of two ways:
+                #   (a) return the (possibly refreshed) unity_driver object, or
+                #   (b) return a result dict {"name","status","steps",...} when
+                #       they catch their own exception internally instead of
+                #       re-raising (e.g. Season Pass, Lucky Cards).
+                # For (b) we MUST honor the dict's own status — otherwise a
+                # self-caught failure gets logged as a false PASS.
+                reported_status = "PASS"
+                if isinstance(result, dict):
+                    reported_status = str(
+                        result.get("status", "PASS")
+                    ).upper()
+                    if reported_status not in ("PASS", "FAIL"):
+                        reported_status = "FAIL"
+                    # a test may hand back a refreshed driver inside the dict
+                    ud = result.get("unity_driver")
+                    if ud is not None and hasattr(ud, "wait_for_object"):
+                        unity_driver = ud
+                        logging.info("🔄 unity_driver updated from test return")
+                elif result is not None and hasattr(result, 'wait_for_object'):
+                    # allow tests to refresh unity driver
                     unity_driver = result
                     logging.info("🔄 unity_driver updated from test return")
-    
-                logging.info(f"✅ PASS: {display_name}")
-    
+
+                if reported_status == "PASS":
+                    logging.info(f"✅ PASS: {display_name}")
+                else:
+                    logging.error(f"❌ FAIL: {display_name}")
+
                 test_results.append({
                     "name": display_name,
-                    "status": "PASS",
+                    "status": reported_status,
                     "steps": collector.steps if collector.steps else [
                         "Test executed successfully"
                     ]
                 })
-    
+
             except Exception as e:
     
                 logging.error(f"❌ FAIL: {display_name}")
@@ -1218,7 +1290,14 @@ def fetch_latest_build_from_slack():
         logging.info("ℹ️  Slack build watcher not configured — skipping")
         return
 
-    # Only fetch messages newer than the last downloaded build
+    # Remember the last downloaded build so we don't re-download it.
+    #
+    # NOTE: we deliberately do NOT pass this as Slack's `oldest` param.
+    # When `oldest` is set without `latest`, conversations.history pages
+    # FORWARD from that timestamp — it returns the OLDEST messages after it,
+    # not the newest. With a stale cache that means brand-new builds never
+    # appear on the first page and get missed. Instead we always fetch the
+    # most recent messages and compare timestamps client-side below.
     last_ts = None
     try:
         last_ts = open(SLACK_LAST_TS_FILE).read().strip() or None
@@ -1226,9 +1305,7 @@ def fetch_latest_build_from_slack():
         pass
 
     headers = {"Authorization": f"Bearer {SLACK_BOT_TOKEN}"}
-    params  = {"channel": SLACK_BUILD_CHANNEL, "limit": 20}
-    if last_ts:
-        params["oldest"] = last_ts  # Slack returns messages with ts > oldest (exclusive)
+    params  = {"channel": SLACK_BUILD_CHANNEL, "limit": 30}
 
     logging.info("🔍 Checking Slack for new builds...")
 
@@ -1254,7 +1331,14 @@ def fetch_latest_build_from_slack():
         return
 
     # Messages are newest-first — pick the first (most recent) matching APK
+    # that is newer than the last build we already downloaded.
     for msg in messages:
+        ts = msg.get("ts", "0")
+
+        # Skip anything we've already downloaded (ts <= last downloaded ts)
+        if last_ts and float(ts) <= float(last_ts):
+            continue
+
         text  = msg.get("text", "")
         files = msg.get("files", [])
 
@@ -1273,7 +1357,7 @@ def fetch_latest_build_from_slack():
                     f"   Match → keyword in "
                     f"{'message' if msg_matches else 'filename'}: {fname}"
                 )
-                _download_slack_apk(f, headers, msg["ts"])
+                _download_slack_apk(f, headers, ts)
                 return  # done — newest matching build downloaded
 
     logging.info("✅ No new matching builds in Slack")
@@ -1355,26 +1439,108 @@ def select_run_type():
 
 
 # -------------------------------
+# NON-INTERACTIVE ENTRY (web GUI / CLI / scheduler)
+# -------------------------------
+def build_config_from_args():
+    """
+    Build a run_flow() config from command-line args / env — WITHOUT any
+    interactive prompt.  Returns None when no run selection was passed, so the
+    caller falls back to the interactive menu (select_run_type()).
+
+    This is purely additive: `python run_this.py` with no args behaves exactly
+    as before (interactive).  The web GUI / scheduler instead calls e.g.:
+
+        python run_this.py --run-type complete --slack on --report on
+        python run_this.py --test "Season Pass" --slack off --report on
+
+    Report toggles are forwarded to report_manager via env vars so no report
+    code needs run-specific arguments.
+    """
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Sorry automation runner (non-interactive mode)"
+    )
+    parser.add_argument(
+        "--run-type",
+        choices=["smoke", "regression", "iap", "bat", "complete"],
+        help="Single-device run type",
+    )
+    parser.add_argument(
+        "--test",
+        help="Run one test by registry name (case-insensitive) or 1-based index",
+    )
+    parser.add_argument("--slack", choices=["on", "off"], help="Send Slack report")
+    parser.add_argument("--report", choices=["on", "off"], help="Generate HTML report")
+    parser.add_argument(
+        "--list-tests",
+        action="store_true",
+        help="Print the test registry (index + name) and exit",
+    )
+    # parse_known_args so unrelated argv (e.g. from a launcher) never crashes us
+    args, _ = parser.parse_known_args()
+
+    if args.list_tests:
+        for i, t in enumerate(TEST_REGISTRY, start=1):
+            print(f"{i}\t{t['name']}")
+        raise SystemExit(0)
+
+    # Report checkboxes → env (report_manager reads these per-run)
+    if args.slack is not None:
+        os.environ["SAT_ENABLE_SLACK"] = "1" if args.slack == "on" else "0"
+    if args.report is not None:
+        os.environ["SAT_ENABLE_HTML"] = "1" if args.report == "on" else "0"
+
+    # Individual test (by index or name)
+    if args.test:
+        selected = None
+        if args.test.isdigit():
+            idx = int(args.test) - 1
+            if 0 <= idx < len(TEST_REGISTRY):
+                selected = TEST_REGISTRY[idx]
+        if selected is None:
+            for t in TEST_REGISTRY:
+                if t["name"].lower() == args.test.strip().lower():
+                    selected = t
+                    break
+        if selected is None:
+            raise SystemExit(f"❌ Unknown test: {args.test!r} (use --list-tests)")
+        return {"mode": "individual", "test": selected}
+
+    if args.run_type:
+        return {"mode": "single", "run_type": args.run_type}
+
+    # No run selection on the command line → caller uses the interactive menu
+    return None
+
+
+# -------------------------------
 # ENTRY
 # -------------------------------
 if __name__ == "__main__":
 
     START_TIME = time.time()
 
-    config = select_run_type()
+    # Non-interactive selection (web GUI / CLI / scheduler) takes precedence;
+    # with no run args this returns None and we fall back to the interactive
+    # menu so the existing Eclipse "run" flow is unchanged.
+    config = build_config_from_args()
+    if config is None:
+        config = select_run_type()
 
     # Check Slack for a new build after the user has made their selection.
     # Downloads the APK to APK_FOLDER if a matching file is found;
     # get_latest_apk() will pick it up automatically (newest by ctime).
     fetch_latest_build_from_slack()
 
+    _exit_code = 0
     try:
         run_flow(config)
 
     except Exception as e:
         logging.error("❌ SCRIPT FAILED")
         logging.error(str(e))
-        raise
+        _exit_code = 1
 
     finally:
 
@@ -1384,5 +1550,12 @@ if __name__ == "__main__":
         mins = int(total // 60)
         secs = int(total % 60)
 
-        print("\n🏁 ALL TESTS FINISHED")
-        print(f"⏱️ TOTAL EXECUTION TIME: {mins}m {secs}s")
+        print("\n🏁 ALL TESTS FINISHED", flush=True)
+        print(f"⏱️ TOTAL EXECUTION TIME: {mins}m {secs}s", flush=True)
+
+    # Force the process to exit NOW. Appium / Mongo / AltTester websocket
+    # keepalives can leave non-daemon threads running that would otherwise keep
+    # this process alive after the run finishes — which left the web GUI stuck
+    # showing the device as Busy (Stop active, timer running). The webapp
+    # watches for this exit to flip the device back to Free.
+    os._exit(_exit_code)

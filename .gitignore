@@ -16,3 +16,6 @@ __pycache__/
 # Generated run artifacts
 automation_report.html
 automation_report_assets/
+
+# Web GUI per-run console logs
+webapp/runs/

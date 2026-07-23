@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Automation Runner</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <div class="bg-fx"></div>
+  <div class="bg-image"></div>
+
+  <main class="card">
+    <header class="head">
+      <h1>🎮 <span id="title-project">Automation</span></h1>
+      <div id="device-pill" class="pill pill-free">
+        <span class="dot"></span><span id="device-text">Free</span>
+      </div>
+    </header>
+
+    <form id="run-form" class="form">
+      <label class="field">
+        <span>Project</span>
+        <select name="project" id="project">
+          {% for p in projects %}
+          <option value="{{ p.name }}" data-runnable="{{ 'true' if p.runnable else 'false' }}">
+            {{ p.name }}{{ '' if p.runnable else '  (setup pending)' }}
+          </option>
+          {% endfor %}
+        </select>
+      </label>
+      <p id="project-note" class="note hidden"></p>
+
+      <label class="field">
+        <span>Run from (branch)</span>
+        <select name="ref" id="ref"><option value="">current</option></select>
+      </label>
+
+      <div class="field">
+        <span>What to run</span>
+        <div class="seg">
+          <label><input type="radio" name="mode" value="type" checked /> Run type</label>
+          <label><input type="radio" name="mode" value="test" /> Single test</label>
+        </div>
+      </div>
+
+      <label class="field" id="type-field">
+        <span>Run type</span>
+        <select name="run_type" id="run_type">
+          {% for r in run_types %}<option value="{{ r }}"{% if r == 'complete' %} selected{% endif %}>{{ r|capitalize }}</option>{% endfor %}
+        </select>
+      </label>
+
+      <label class="field hidden" id="test-field">
+        <span>Test</span>
+        <select name="test" id="test">
+          {% for t in tests %}<option value="{{ t }}">{{ t }}</option>{% endfor %}
+        </select>
+      </label>
+
+      <div class="toggles">
+        <label class="switch">
+          <input type="checkbox" name="slack" value="on" />
+          <span class="track"></span><span class="lbl">Slack message</span>
+        </label>
+        <label class="switch">
+          <input type="checkbox" name="report" value="on" checked />
+          <span class="track"></span><span class="lbl">HTML report</span>
+        </label>
+      </div>
+
+      <div class="actions">
+        <button type="submit" id="run-btn" class="btn btn-run">▶ Run</button>
+        <button type="button" id="stop-btn" class="btn btn-stop" disabled>■ Stop</button>
+        <a href="/report" target="_blank" id="report-link" class="btn btn-ghost disabled">📄 Report</a>
+      </div>
+    </form>
+
+    <section class="status-bar">
+      <span id="status-label">Idle</span>
+      <span id="status-timer" class="timer"></span>
+    </section>
+
+    <section class="agents-panel">
+      <div class="agents-head">Remote devices <span class="hint">— uses the options selected above</span></div>
+      <div id="agents"><div class="agent-empty">No remote agents connected.</div></div>
+    </section>
+
+    <section class="console">
+      <div class="console-head">
+        <div class="console-left">
+          <span>Console</span>
+          <span class="hist-label">History</span>
+          <select id="history" class="history" title="View a past run's console log">
+            <option value="">▶ Live (current)</option>
+          </select>
+        </div>
+        <div class="console-right">
+          <label class="autoscroll"><input type="checkbox" id="autoscroll" checked /> auto-scroll</label>
+          <button type="button" id="copy-btn" class="mini-btn" title="Copy all console output">⧉ Copy</button>
+        </div>
+      </div>
+      <div id="ro-banner" class="ro-banner hidden">
+        👁 Viewing a past run (read-only). <a href="#" id="back-live">Return to live ▸</a>
+      </div>
+      <pre id="log" class="log">Ready. Pick options and hit Run.</pre>
+    </section>
+  </main>
+
+  <script>
+    // ── Per-project background themes (visual indicator of selection) ─────────
+    const PROJECT_THEMES = {
+      "Sorry! World":       { c1:"#6d8bff", c2:"#b06dff", c3:"#2fe08a", a:"#6d8bff", a2:"#b06dff" },
+      "Backgammon Friends": { c1:"#e0a44f", c2:"#c77b3a", c3:"#8a5a2b", a:"#e0a44f", a2:"#c77b3a" },
+      "Ludo Star":          { c1:"#ff6b6b", c2:"#ffd166", c3:"#4cc38a", a:"#ff6b6b", a2:"#ffd166" },
+      "LS - Clubs":         { c1:"#2fe0c0", c2:"#22a3b3", c3:"#2f7be0", a:"#2fe0c0", a2:"#22a3b3" },
+      "Parchisi Star":      { c1:"#ff6fb5", c2:"#a06dff", c3:"#ff8a5c", a:"#ff6fb5", a2:"#a06dff" },
+    };
+    function applyTheme(name) {
+      const t = PROJECT_THEMES[name] || PROJECT_THEMES["Sorry! World"];
+      const r = document.documentElement.style;
+      r.setProperty("--bgc1", t.c1);
+      r.setProperty("--bgc2", t.c2);
+      r.setProperty("--bgc3", t.c3);
+      r.setProperty("--accent", t.a);
+      r.setProperty("--accent2", t.a2);
+      document.getElementById("title-project").textContent = name;
+      applyProjectBg(name);
+    }
+
+    // Custom per-project background image (optional): drop a file named
+    // <slug>.<ext> into webapp/static/bg/ and it's picked up automatically.
+    // If none is found, we fall back to the color gradient. No code change
+    // needed to add images later.
+    const BG_EXTS = ['jpg', 'jpeg', 'webp', 'png'];
+    function slug(name) {
+      return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+    }
+    function applyProjectBg(name) {
+      const bgImage = document.querySelector('.bg-image');
+      const base = '/static/bg/' + slug(name);
+      let i = 0;
+      const tryNext = () => {
+        if (i >= BG_EXTS.length) {           // no image for this project → gradient
+          document.body.classList.remove('has-bg-image');
+          bgImage.style.backgroundImage = 'none';
+          return;
+        }
+        const url = base + '.' + BG_EXTS[i++];
+        const probe = new Image();
+        probe.onload = () => {
+          bgImage.style.backgroundImage = `url("${url}")`;
+          document.body.classList.add('has-bg-image');
+        };
+        probe.onerror = tryNext;             // try next extension, else fall back
+        probe.src = url;
+      };
+      tryNext();
+    }
+
+    const form = document.getElementById('run-form');
+    const projectSel = document.getElementById('project');
+    const projectNote = document.getElementById('project-note');
+    const runBtn = document.getElementById('run-btn');
+    const stopBtn = document.getElementById('stop-btn');
+    const reportLink = document.getElementById('report-link');
+    const logEl = document.getElementById('log');
+    const devicePill = document.getElementById('device-pill');
+    const deviceText = document.getElementById('device-text');
+    const statusLabel = document.getElementById('status-label');
+    const statusTimer = document.getElementById('status-timer');
+    const autoscroll = document.getElementById('autoscroll');
+    const historySel = document.getElementById('history');
+    const roBanner = document.getElementById('ro-banner');
+    const copyBtn = document.getElementById('copy-btn');
+
+    let viewingHistory = false;   // true when a past run is shown (live paused)
+    let logOffset = 0;
+    let currentRun = null;
+    let startedAt = null;
+    let isAgentRun = false;       // true when the shown run is on a remote agent
+
+    // ── Project selection: theme + runnable gating ────────────────────────────
+    function projectRunnable() {
+      const opt = projectSel.selectedOptions[0];
+      return !opt || opt.dataset.runnable === "true";
+    }
+    function onProjectChange(persist) {
+      const name = projectSel.value;
+      applyTheme(name);
+      if (persist) try { localStorage.setItem("sat_project", name); } catch (e) {}
+      const runnable = projectRunnable();
+      projectNote.classList.toggle("hidden", runnable);
+      if (!runnable) projectNote.textContent =
+        "⚠ " + name + " isn't wired to a runner yet — Run is disabled for it.";
+      // Run button reflects runnable AND not-busy (busy handled in pollStatus)
+      if (!runnable) runBtn.disabled = true;
+    }
+    projectSel.addEventListener('change', () => onProjectChange(true));
+    // restore last project
+    try {
+      const saved = localStorage.getItem("sat_project");
+      if (saved && [...projectSel.options].some(o => o.value === saved)) projectSel.value = saved;
+    } catch (e) {}
+    onProjectChange(false);
+
+    // ── Run-type vs single-test toggle ────────────────────────────────────────
+    function syncMode() {
+      const mode = form.querySelector('input[name="mode"]:checked').value;
+      document.getElementById('type-field').classList.toggle('hidden', mode !== 'type');
+      document.getElementById('test-field').classList.toggle('hidden', mode !== 'test');
+    }
+    form.querySelectorAll('input[name="mode"]').forEach(r => r.addEventListener('change', syncMode));
+    syncMode();
+
+    // ── Copy console ──────────────────────────────────────────────────────────
+    copyBtn.addEventListener('click', async () => {
+      const text = logEl.textContent || "";
+      let ok = false;
+      // Preferred: async Clipboard API — only works in a secure context
+      // (https:// or localhost). Over plain HTTP on the LAN it's unavailable.
+      try {
+        if (navigator.clipboard && window.isSecureContext) {
+          await navigator.clipboard.writeText(text);
+          ok = true;
+        }
+      } catch (e) { ok = false; }
+      // Fallback for plain-HTTP LAN access: actually copy via execCommand on a
+      // temporary textarea (this puts it on the clipboard, so Ctrl+V works).
+      if (!ok) {
+        try {
+          const ta = document.createElement('textarea');
+          ta.value = text;
+          ta.setAttribute('readonly', '');
+          ta.style.position = 'fixed';
+          ta.style.top = '-1000px';
+          ta.style.opacity = '0';
+          document.body.appendChild(ta);
+          ta.focus();
+          ta.select();
+          ta.setSelectionRange(0, text.length);
+          ok = document.execCommand('copy');
+          document.body.removeChild(ta);
+        } catch (e) { ok = false; }
+      }
+      const old = copyBtn.textContent;
+      copyBtn.textContent = ok ? "✓ Copied" : "⚠ Ctrl+C to copy";
+      setTimeout(() => { copyBtn.textContent = old; }, 1400);
+    });
+
+    // ── History ────────────────────────────────────────────────────────────────
+    function fmtTime(epoch) {
+      if (!epoch) return "";
+      const d = new Date(epoch * 1000);
+      return d.toLocaleString();
+    }
+    async function loadHistory() {
+      try {
+        const data = await (await fetch('/history')).json();
+        const keep = historySel.value;
+        historySel.innerHTML = '<option value="">▶ Live (current)</option>';
+        (data.runs || []).forEach(r => {
+          const badge = r.status === 'passed' ? '✅' : r.status === 'failed' ? '❌' : '●';
+          const o = document.createElement('option');
+          o.value = r.run_id;
+          o.textContent = `${badge} ${r.display || r.run_id} — ${fmtTime(r.started)}`;
+          historySel.appendChild(o);
+        });
+        if ([...historySel.options].some(o => o.value === keep)) historySel.value = keep;
+      } catch (e) { /* ignore */ }
+    }
+    historySel.addEventListener('change', async () => {
+      const id = historySel.value;
+      if (!id) { returnToLive(); return; }
+      viewingHistory = true;
+      roBanner.classList.remove('hidden');
+      try {
+        const res = await fetch(`/log?run_id=${id}&offset=0`);
+        logEl.textContent = await res.text() || "(empty log)";
+        logEl.scrollTop = 0;
+      } catch (e) { logEl.textContent = "(could not load this run)"; }
+    });
+    function returnToLive() {
+      viewingHistory = false;
+      historySel.value = "";
+      roBanner.classList.add('hidden');
+      logEl.textContent = "";
+      logOffset = 0;   // pollLog will re-fetch the current run from the start
+    }
+    document.getElementById('back-live').addEventListener('click', (e) => {
+      e.preventDefault(); returnToLive();
+    });
+
+    // ── Live polling ────────────────────────────────────────────────────────────
+    function fmtElapsed(sec) {
+      const m = Math.floor(sec / 60), s = sec % 60;
+      return `${m}m ${String(s).padStart(2, '0')}s`;
+    }
+    async function pollLog() {
+      if (viewingHistory || !currentRun) return;
+      const myRun = currentRun;   // remember which run this poll is for
+      try {
+        const res = await fetch(`/log?run_id=${myRun}&offset=${logOffset}`);
+        if (currentRun !== myRun) return;        // run changed mid-flight → discard
+        const text = await res.text();
+        if (currentRun !== myRun) return;        // re-check after awaiting body
+        const newOffset = parseInt(res.headers.get('X-Offset') || logOffset, 10);
+        if (text) {
+          if (logEl.textContent === 'Ready. Pick options and hit Run.') logEl.textContent = '';
+          logEl.textContent += text;
+          logOffset = newOffset;
+          if (autoscroll.checked) logEl.scrollTop = logEl.scrollHeight;
+        }
+      } catch (e) { /* transient */ }
+    }
+    async function pollStatus() {
+      try {
+        const s = await (await fetch('/status')).json();
+        const busy = s.running;
+        devicePill.className = 'pill ' + (busy ? 'pill-busy' : 'pill-free');
+        deviceText.textContent = busy ? 'Busy' : 'Free';
+        runBtn.disabled = busy || !projectRunnable();
+        stopBtn.disabled = !busy;              // Stop is for the LOCAL run only
+        reportLink.classList.toggle('disabled', !s.report_available);
+
+        // Local-run tracking — only when the shown run is the local one.
+        if (!isAgentRun) {
+          if (busy) {
+            if (currentRun !== s.run_id) { currentRun = s.run_id; }
+            if (!startedAt && s.started) startedAt = s.started;
+            if (!viewingHistory) {
+              statusLabel.textContent = '● Running — ' + (s.label || '');
+              if (s.started) statusTimer.textContent = fmtElapsed(Math.floor(Date.now()/1000 - s.started));
+            }
+          } else if (currentRun) {
+            const finishing = currentRun;
+            await pollLog();                     // final pull
+            if (currentRun === finishing && !isAgentRun) {
+              let verdict;
+              if (s.stopped) verdict = '■ Stopped';
+              else verdict = (s.returncode === 0) ? '✅ Finished'
+                                                  : '❌ Failed (exit ' + s.returncode + ')';
+              if (!viewingHistory) statusLabel.textContent = verdict + ' — ' + (s.label || '');
+              currentRun = null; startedAt = null;
+              loadHistory();
+            }
+          }
+        }
+      } catch (e) { /* server not reachable yet */ }
+
+      loadAgents();
+
+      // Agent-run tracking — status comes from the run's metadata, not STATE.
+      if (isAgentRun && currentRun && !viewingHistory) {
+        try {
+          const info = await (await fetch('/runinfo?run_id=' + currentRun)).json();
+          if (info.running) {
+            statusLabel.textContent = '● Running (remote) — ' + (info.label || '');
+            if (startedAt) statusTimer.textContent = fmtElapsed(Math.floor(Date.now()/1000 - startedAt));
+          } else {
+            const finishing = currentRun;
+            await pollLog();                     // final pull
+            if (currentRun === finishing) {
+              const v = info.status === 'passed' ? '✅ Finished'
+                      : info.status === 'stopped' ? '■ Stopped'
+                      : '❌ Failed';
+              statusLabel.textContent = v + ' (remote) — ' + (info.label || '');
+              isAgentRun = false; currentRun = null; startedAt = null;
+              loadHistory();
+            }
+          }
+        } catch (e) { /* transient */ }
+      }
+    }
+
+    // ── Remote agents ─────────────────────────────────────────────────────────
+    async function loadAgents() {
+      let list = [];
+      try { list = (await (await fetch('/agents')).json()).agents || []; } catch (e) { return; }
+      const box = document.getElementById('agents');
+      if (!list.length) {
+        box.innerHTML = '<div class="agent-empty">No remote agents connected.</div>';
+        return;
+      }
+      box.innerHTML = '';
+      list.forEach(a => {
+        const dev = (a.devices && a.devices.length) ? a.devices.join(', ') : 'no device';
+        const row = document.createElement('div');
+        row.className = 'agent-row';
+        row.innerHTML =
+          `<span class="agent-dot ${a.status}"></span>` +
+          `<span class="agent-name">${a.name}</span>` +
+          `<span class="agent-dev">${dev}</span>` +
+          `<span class="agent-st">${a.status}</span>`;
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'mini-btn run';
+        btn.textContent = '▶ Run here';
+        btn.disabled = (a.status !== 'idle') || !projectRunnable();
+        btn.onclick = () => dispatchToAgent(a.agent_id);
+        row.appendChild(btn);
+        box.appendChild(row);
+      });
+    }
+
+    async function dispatchToAgent(agentId) {
+      // reuse the main form's project / run-type / test / toggles
+      const data = new FormData(form);
+      data.set('agent_id', agentId);
+      if (!data.get('slack')) data.set('slack', 'off');
+      if (!data.get('report')) data.set('report', 'off');
+      // clear console + pause polling until we have the new run id
+      returnToLive();
+      logEl.textContent = '';
+      logOffset = 0;
+      currentRun = null; isAgentRun = false; startedAt = null;
+      statusLabel.textContent = '● Dispatching…';
+      let j;
+      try {
+        j = await (await fetch('/dispatch', { method: 'POST', body: data })).json();
+      } catch (e) {
+        statusLabel.textContent = '⚠ could not reach server';
+        return;
+      }
+      if (!j.ok) { statusLabel.textContent = '⚠ ' + j.error; return; }
+      logOffset = 0;
+      currentRun = j.run_id;
+      isAgentRun = true;
+      startedAt = Math.floor(Date.now() / 1000);
+      statusLabel.textContent = '● Running (remote) — ' + j.label;
+      loadHistory();
+    }
+
+    // ── Submit ────────────────────────────────────────────────────────────────
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if (!projectRunnable()) return;
+      runBtn.disabled = true;
+      // Clear the console NOW and pause live polling (currentRun=null) so
+      // nothing from the previous / just-stopped run lingers or races back in
+      // while /run is in flight.
+      returnToLive();
+      logEl.textContent = '';
+      logOffset = 0;
+      currentRun = null;
+      startedAt = null;
+      statusLabel.textContent = '● Starting…';
+      const data = new FormData(form);
+      if (!data.get('slack')) data.set('slack', 'off');
+      if (!data.get('report')) data.set('report', 'off');
+      let j;
+      try {
+        const res = await fetch('/run', { method: 'POST', body: data });
+        j = await res.json();
+      } catch (err) {
+        statusLabel.textContent = '⚠ could not start run';
+        runBtn.disabled = busyOrUnrunnable();
+        return;
+      }
+      if (!j.ok) {
+        statusLabel.textContent = '⚠ ' + j.error;
+        runBtn.disabled = busyOrUnrunnable();
+        return;
+      }
+      logOffset = 0;
+      currentRun = j.run_id;          // resume polling, now for the NEW run
+      statusLabel.textContent = '● Starting — ' + j.label;
+      loadHistory();
+    });
+    function busyOrUnrunnable() { return !projectRunnable(); }
+
+    stopBtn.addEventListener('click', async () => {
+      stopBtn.disabled = true;
+      statusLabel.textContent = '■ Stopping…';
+      try { await fetch('/stop', { method: 'POST' }); } catch (e) {}
+      pollStatus();   // reflect Free immediately, don't wait for the next tick
+    });
+
+    // ── Branch / version selector ──────────────────────────────────────────────
+    async function loadBranches() {
+      let d;
+      try { d = await (await fetch('/branches')).json(); } catch (e) { return; }
+      const sel = document.getElementById('ref');
+      const keep = sel.value;
+      sel.innerHTML = '';
+      (d.branches || []).forEach(b => {
+        const o = document.createElement('option');
+        o.value = b;
+        o.textContent = (b === d.current) ? `${b} (current)`
+                       : (b === 'master') ? 'master (frozen)' : b;
+        sel.appendChild(o);
+      });
+      if ([...sel.options].some(o => o.value === keep) && keep) sel.value = keep;
+      else if (d.current) sel.value = d.current;
+    }
+
+    setInterval(pollStatus, 1500);
+    setInterval(pollLog, 1200);
+    pollStatus();
+    loadHistory();
+    loadBranches();
+  </script>
+</body>
+</html>

@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Auto-starts the Automation Runner AGENT on a teammate's Mac: runs at login,
+  restarts if it crashes. After this, daily use is just: plug in device → open
+  the browser → pick a run → Run here. The agent is always running.
+
+  EDIT the <PLACEHOLDERS> for this laptop, then install:
+    cp com.gameberrylabs.automation-agent.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.gameberrylabs.automation-agent.plist
+
+  Restart after a change:
+    launchctl kickstart -k gui/$(id -u)/com.gameberrylabs.automation-agent
+  Stop:
+    launchctl unload ~/Library/LaunchAgents/com.gameberrylabs.automation-agent.plist
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.gameberrylabs.automation-agent</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <!-- the Python that has the automation deps installed on THIS laptop -->
+        <string>/usr/local/bin/python3</string>
+        <string>agent.py</string>
+    </array>
+
+    <!-- path to the repo copied onto THIS laptop -->
+    <key>WorkingDirectory</key>
+    <string>/Users/&lt;YOU&gt;/git/repository/Sorry</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>SAT_SERVER</key>
+        <string>http://GBL-Admins-MacBook-Air.local:8000</string>
+        <key>SAT_AGENT_NAME</key>
+        <string>&lt;THIS LAPTOP NAME&gt;</string>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Users/&lt;YOU&gt;/Library/Android/sdk/platform-tools</string>
+        <key>PYTHONUNBUFFERED</key>
+        <string>1</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/&lt;YOU&gt;/git/repository/Sorry/webapp/runs/agent.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/&lt;YOU&gt;/git/repository/Sorry/webapp/runs/agent.log</string>
+</dict>
+</plist>

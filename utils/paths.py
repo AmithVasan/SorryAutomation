@@ -178,7 +178,7 @@ SEASON_PASS_CLOSE = "/Canvas/ModalLayer/SeasonPassModal(Clone)/root/closeGrp/clo
 
 ACTIVATE_BTN_PATH = "/Canvas/ModalLayer/SeasonPassModal(Clone)/root/verticalLayout/mainSection/layout/seasonPassHeader/bonusPassHeader/banner/layout/seasonActivateBtn/activateCTA/TouchArea"
 
-BUY_BTN_PATH = "/Canvas/ModalLayer/SeasonPassPurchaseModal(Clone)/rootMain/rewardsSection/SorryButtonType-Currency/root"
+BUY_BTN_PATH = "/Canvas/ModalLayer/SeasonPassPurchaseModal(Clone)/rootMain/Layout/TopPivotContainer/rewardsSection/SorryButtonType-Currency/TouchArea"
 
 FREE_TIER1_PATH = "/Canvas/ModalLayer/SeasonPassModal(Clone)/root/verticalLayout/mainSection/layout/mask/scrollView/viewport/content/SeasonTierScollItem_1/freePass/FreeTierRewardItem/claimBtn/SorryButtonType-Text/TouchArea"
 
@@ -390,15 +390,64 @@ INFO_SCREENS = [
 HF_TI_ICON             = "/Canvas/uiLayer/TableManager/layout/viewPort/content/HomeScreen/topSections/lobbyWidgetSection/LHS_RHS_Content/IconsLHS/FortuneIslandLobbyWidget/scaleAdjuster/root/Overlay Parent/WidgetIcon/Icon Parent/mainIcon"
 HF_TI_INFO_SCREEN      = "/Canvas/ModalLayer/fortuneislandinfoModal(Clone)/root/container/PlayerGrp/bottomSection"
 HF_TI_FREE_AMMO_MODAL  = "/Canvas/ModalLayer/FortuneIslandFreeAmmoModal(Clone)/rootMain"
-HF_TI_FREE_AMMO_COUNT  = "/Canvas/ModalLayer/FortuneIslandFreeAmmoModal(Clone)/rootMain/InnerPanel/Bg/SpriteRewardItem/visualParent/rewardMain/textMain/amountText/text"
+HF_TI_FREE_AMMO_COUNT  = "/Canvas/ModalLayer/FortuneIslandFreeAmmoModal(Clone)/rootMain/InnerPanel/Bg/SpriteRewardItem/visualParent/rewardMain/textMain/amountText/textt"
 HF_TI_AWESOME_BTN      = "/Canvas/ModalLayer/FortuneIslandFreeAmmoModal(Clone)/rootMain/GreenCTA/TouchArea"
-HF_TI_TOTAL_AMMO       = "/Canvas/ModalLayer/FortuneIslandMainModal(Clone)/Container/InitialFtueHandler/highlightingParent/FIMainScreenAmmoUI/root/container/WidgetIcon/Icon Parent/mainIcon"
+HF_TI_TOTAL_AMMO       = "/Canvas/ModalLayer/FortuneIslandMainModal(Clone)/Container/bottomSection/FIMainScreenAmmoUI/root/container/bg/textLabel/TextStyle_caption_extraSmall_black/text"
 # NOTE: Chest FTUE uses a different modal name (FortuneIslasedMainModal — typo is in the game itself)
 HF_TI_CHEST_FTUE       = "/Canvas/ModalLayer/FortuneIslasedMainModal(Clone)/Container/InitialFtueHandler/click"
 # Kitty Bag, 2nd Chest, and final FTUE click all use the corrected modal name
 HF_TI_FTUE_CLICK       = "/Canvas/ModalLayer/FortuneIslandMainModal(Clone)/Container/InitialFtueHandler/click"
 HF_TI_LEVEL_COMPLETE   = "/Canvas/ModalLayer/FortuneIslandMainModal(Clone)/FortuneIslandLevelCompleteRewardsModal/ClickArea"
 HF_TI_CLOSE            = "/Canvas/ModalLayer/FortuneIslandMainModal(Clone)/Container/closeButton/closeButton/touchArea"
+
+# -----------------------------------------------------------------------
+# TREASURE ISLAND — full play test (test_13)
+# Reuses HF_TI_ICON / HF_TI_CLOSE / HF_TI_TOTAL_AMMO above.
+# NOTE: the revive paths contain a trailing space after "GreenCTA" — that
+# is the real in-game node name, kept exactly as-is.
+# -----------------------------------------------------------------------
+_TI_MAIN = "/Canvas/ModalLayer/FortuneIslandMainModal(Clone)"
+
+TI_ICON              = HF_TI_ICON
+TI_CLOSE             = HF_TI_CLOSE
+TI_MAIN_MODAL        = _TI_MAIN + "/Container"
+TI_TOTAL_AMMO        = HF_TI_TOTAL_AMMO
+TI_LEVEL_PROGRESS    = _TI_MAIN + "/Container/FIMainScreenHeaderUI/root/LevelPanel/TextStyle_Amount_T1_medium/text"
+
+# Chest slots (randomly spread; up to 40 slots, chest variant 1/2/3 per slot)
+TI_CHEST_SLOTS       = _TI_MAIN + "/Container/Anchored/ScalableLayout/ChestLayout/ChestSlots"
+
+# Level rewards (shown on the main screen for the current level)
+TI_LEVEL_REWARD_GOLD = _TI_MAIN + "/Container/bottomSection/FIMainScreenLevelRewardsUi/bgImage/Rewards/BaseRewardInstantiator/root/SpriteRewardItem_9/visualParent/rewardMain/textMain/amountText/text"
+TI_LEVEL_REWARD_GEM  = _TI_MAIN + "/Container/bottomSection/FIMainScreenLevelRewardsUi/bgImage/Rewards/BaseRewardInstantiator_1/root/SpriteRewardItem_10/visualParent/rewardMain/textMain/amountText/text"
+
+# Kitty bag (accumulated rewards, handed over at each checkpoint)
+TI_KITTY_GOLD        = _TI_MAIN + "/Container/bottomSection/FIMainScreenKittyBagUI/root/RewardInfoTooltip/content/rewardsContainer/BaseRewardInstantiator(Clone)/root/SpriteRewardItem_8/visualParent/rewardMain/textMain/amountText/text"
+TI_KITTY_AMMO        = _TI_MAIN + "/Container/bottomSection/FIMainScreenKittyBagUI/root/RewardInfoTooltip/content/rewardsContainer/BaseRewardInstantiator(Clone)[1]/root/SpriteRewardItem_17/visualParent/rewardMain/textMain/amountText/text"
+
+# Reward CONTAINERS — scanned as subtrees (index-independent) to pull the
+# reward amounts, since the SpriteRewardItem_N index is assigned dynamically.
+TI_LEVEL_REWARDS_CONTAINER  = _TI_MAIN + "/Container/bottomSection/FIMainScreenLevelRewardsUi/bgImage/Rewards"
+TI_KITTY_CONTAINER          = _TI_MAIN + "/Container/bottomSection/FIMainScreenKittyBagUI/root/RewardInfoTooltip/content/rewardsContainer"
+# Tapping the kitty bag opens its reward tooltip, which auto-hides after ~1-2s
+# (the only time the kitty rewards are rendered). CONFIRM this tap target.
+TI_KITTY_TAP                = _TI_MAIN + "/Container/bottomSection/FIMainScreenKittyBagUI/root"
+TI_EVENT_COMPLETE_CONTAINER = _TI_MAIN + "/FortuneIslandEventCompleteRewardsModal/container"
+
+# Level-complete (Doubloon key found) → tap to go to next level
+TI_DOUBLOON_KEY      = _TI_MAIN + "/FortuneIslandLevelCompleteRewardsModal/ClickArea"
+
+# FTUE overlays that can appear mid-play
+TI_CHECKPOINT_FTUE   = _TI_MAIN + "/Container/CheckpointFtueHandler/overlay"
+TI_BOMB_FTUE         = _TI_MAIN + "/Container/BombFtueHandler/overlay"
+
+# Bomb-hit modal (revive or lose all)
+TI_BOMB_MODAL        = "/Canvas/ModalLayer/FortuneIslandBombHitModal(Clone)"
+TI_REVIVE_COST       = "/Canvas/ModalLayer/FortuneIslandBombHitModal(Clone)/rootMain/scaleAdjuster/GreenCTA /root/TextStyle_Button_Primary/text01"
+TI_REVIVE_BUTTON     = "/Canvas/ModalLayer/FortuneIslandBombHitModal(Clone)/rootMain/scaleAdjuster/GreenCTA /TouchArea"
+
+# Event complete
+TI_COMPLETE_SCREEN   = _TI_MAIN + "/FortuneIslandEventCompleteRewardsModal/container/bottomContent/tapToClaimtext"
 
 # --- SkyRush / SoapBox ---
 HF_SKYRUSH_ICON        = "/Canvas/uiLayer/TableManager/layout/viewPort/content/HomeScreen/topSections/lobbyWidgetSection/LHS_RHS_Content/IconsLHS/liveOpsRaceWidget/scaleAdjuster/root/Overlay Parent/WidgetIcon/Icon Parent/mainIcon"
@@ -512,10 +561,10 @@ GAME_FIREICE_RULES_SCREEN = "/Canvas/ModalLayer/FireAndIceInfoModal(Clone)/darkb
 GAME_FIREICE_RULES_CTA    = "/Canvas/ModalLayer/FireAndIceInfoModal(Clone)/rootMain/CTA/TouchArea"
 # Reads the currently-selected mode label (used to confirm Classic is active)
 GAME_BET_MODE        = "/Canvas/ModalLayer/betScreenRevamped(Clone)/root/layout/content/tabAndContent/tabsHandler/tabs/ScrollParent/scrollView/viewport/content/NormalBetscreenModesTab/activeTab/gridLayout/text/TextStyle_Amount_T1_large/text"
-GAME_BET_AMOUNT      = "/Canvas/ModalLayer/betScreenRevamped(Clone)/root/layout/content/tabAndContent/innerContent/pagesAndButtons/pages/Content/ClassicBetscreenModePageVariant/topRewardGrp/BaseRewardInstantiator/root/SpriteRewardItem_159/visualParent/rewardMain/textMain/amountText/text"
+GAME_BET_AMOUNT      = "/Canvas/ModalLayer/betScreenRevamped(Clone)/root/layout/content/tabAndContent/innerContent/pagesAndButtons/buttons/play_button/root/currencyText/text01"
 GAME_BET_PREV        = "/Canvas/ModalLayer/betScreenRevamped(Clone)/root/layout/content/tabAndContent/innerContent/pagesAndButtons/buttons/prev_button/touchArea"
 GAME_BET_NEXT        = "/Canvas/ModalLayer/betScreenRevamped(Clone)/root/layout/content/tabAndContent/innerContent/pagesAndButtons/buttons/next_button/touchArea"
-GAME_BET_PLAY_TEXT   = "/Canvas/ModalLayer/betScreenRevamped(Clone)/root/layout/content/tabAndContent/innerContent/pagesAndButtons/buttons/next_button/touchArea"
+GAME_BET_PLAY_TEXT   = "/Canvas/ModalLayer/betScreenRevamped(Clone)/root/layout/content/tabAndContent/innerContent/pagesAndButtons/buttons/play_button/root/currencyText/text01"
 GAME_BET_PLAY_BTN    = "/Canvas/ModalLayer/betScreenRevamped(Clone)/root/layout/content/tabAndContent/innerContent/pagesAndButtons/buttons/play_button/TouchArea"
 
 # In-game HUD
@@ -536,7 +585,7 @@ GAME_REDRAW_GEM     = "/Canvas/GameplayLayer/2pGameplayLayer/SorryGameBoard/boar
 # Card actions — Fire & Ice mode (2pFireAndIceGameplayLayer / FireAndIceGameBoard)
 GAME_FIREICE_CARD_DRAW  = "/Canvas/GameplayLayer/2pFireAndIceGameplayLayer(Clone)/FireAndIceGameBoard/board/root/mainGameContent/buttonContent/withdrawButton_02"
 GAME_FIREICE_REDRAW_BTN = "/Canvas/GameplayLayer/2pFireAndIceGameplayLayer(Clone)/FireAndIceGameBoard/board/root/mainGameContent/buttonContent/redrawButton_New/root/iconContent/root/arrowParent/arrow"
-GAME_FIREICE_REDRAW_GEM = "/Canvas/GameplayLayer/2pFireAndIceGameplayLayer(Clone)/FireAndIceGameBoard/board/root/mainGameContent/buttonContent/withdrawButton_02/dynamicCards/root/root/WithdrawCard/front/sorry/Lower/TextStyle_bodyText_extraExtraLarge/text"
+GAME_FIREICE_REDRAW_GEM = "/Canvas/GameplayLayer/2pFireAndIceGameplayLayer(Clone)/FireAndIceGameBoard/board/root/mainGameContent/buttonContent/redrawButton_New/root/redraw /text"
 
 # Burger menu / quit
 GAME_BURGER_MENU    = "/Canvas/hudLayer/settings/grp/leftGrp/burgerMenu/touchArea"

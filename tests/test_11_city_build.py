@@ -246,6 +246,16 @@ def test_city_build(unity_driver, driver):
         time.sleep(1)
 
     # ------------------------------------------------------------------
+    # 4b. Clear any popups carried over onto the build screen
+    #     (e.g. Piggy Bank sale) before starting to tap cards.
+    #     The step-1 clear runs on Home, BEFORE entering the build screen,
+    #     so sale popups that surface on entry must be cleared here too.
+    # ------------------------------------------------------------------
+    logging.info("🧹 Clearing any popups on the build screen before starting...")
+    time.sleep(1)                       # let a carried-over popup animate in
+    clear_all_popups(unity_driver)
+
+    # ------------------------------------------------------------------
     # 5. Log initial Build Progress Bar
     # ------------------------------------------------------------------
     progress = fast_text(unity_driver, CB_PROGRESS_BAR) or "N/A"

@@ -48,6 +48,7 @@ Adding support for a new item
    failure popup and decide whether to retry or skip.
 """
 
+import os
 import time
 import logging
 import subprocess
@@ -65,6 +66,9 @@ from config import ADB_PATH
 _PACKAGE_NAME  = "com.gameberry.sorry.card.board.game"
 _ACTIVITY_NAME = "com.unity3d.player.SorryUnityPlayerActivity"
 _ALT_PORT      = 13000
+# AltTester server host — 127.0.0.1 by default (local, unchanged); override
+# with env SAT_ALT_HOST to reconnect to a central LAN server after a purchase.
+_ALT_HOST      = os.getenv("SAT_ALT_HOST", "127.0.0.1")
 _APP_NAME      = "sorry"
 
 # -----------------------------------------------------------------------
@@ -823,16 +827,32 @@ def reconnect_alttester(unity_driver=None):
         time.sleep(5)
 
     for attempt in range(10):
+        driver = None
         try:
             driver = AltDriver(
-                host="127.0.0.1", port=_ALT_PORT, app_name=_APP_NAME
+                host=_ALT_HOST, port=_ALT_PORT, app_name=_APP_NAME
             )
-            logging.info(f"✅ [GP] AltTester reconnected (attempt {attempt + 1})")
+
+            # A successful constructor only means the websocket is up — it does
+            # NOT guarantee the app is responsive yet.  Probe with a real call
+            # so we never hand back a half-ready driver to the next test.
+            scene = driver.get_current_scene()
+            logging.info(
+                f"✅ [GP] AltTester reconnected & responsive "
+                f"(attempt {attempt + 1}, scene: {scene})"
+            )
             return driver
         except Exception as e:
             logging.warning(
                 f"⚠️ [GP] Reconnect attempt {attempt + 1} failed: {e}"
             )
+            # If the driver connected but the readiness probe failed, close it
+            # so the app isn't left with a dangling AltTester connection.
+            if driver is not None:
+                try:
+                    driver.stop()
+                except Exception:
+                    pass
             time.sleep(2)
 
     raise RuntimeError("❌ [GP] AltTester reconnect failed after all attempts")

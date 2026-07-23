@@ -15,6 +15,13 @@ TEST_REGISTRY = [
     },
 
     {
+        "file": "test_08_season_pass.py",
+        "function": "test_season_pass",
+        "name": "Season Pass",
+        "type": ["iap", "regression", "complete"]
+    },
+
+    {
         "file": "test_03_shop.py",
         "function": "test_shop_purchase",
         "name": "Shop Purchase",
@@ -50,13 +57,6 @@ TEST_REGISTRY = [
     },
 
     {
-        "file": "test_08_season_pass.py",
-        "function": "test_season_pass",
-        "name": "Season Pass",
-        "type": ["iap", "regression", "complete"]
-    },
-
-    {
         "file": "test_09_classicmode.py",
         "function": "test_gameplay",
         "name": "Gamemode - Classic",
@@ -81,6 +81,13 @@ TEST_REGISTRY = [
         "file": "test_12_beachbuddies.py",
         "function": "test_beach_buddies",
         "name": "Beach Buddies",
+        "type": ["complete"]
+    },
+
+    {
+        "file": "test_13_treasureisland.py",
+        "function": "test_treasure_island",
+        "name": "Treasure Island",
         "type": ["complete"]
     },
 

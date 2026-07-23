@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Keeps the Automation Runner web GUI running: starts at login and restarts if
+  it crashes. Paths are for THIS Mac; adjust for another machine.
+
+  Install:
+    pkill -f "webapp.app:app"                                  # stop any manual instance
+    cp webapp/com.gameberrylabs.automation-runner.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.gameberrylabs.automation-runner.plist
+
+  Restart after a code change:
+    launchctl kickstart -k gui/$(id -u)/com.gameberrylabs.automation-runner
+
+  Stop / uninstall:
+    launchctl unload ~/Library/LaunchAgents/com.gameberrylabs.automation-runner.plist
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.gameberrylabs.automation-runner</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/python3</string>
+        <string>-m</string>
+        <string>uvicorn</string>
+        <string>webapp.app:app</string>
+        <string>--host</string>
+        <string>0.0.0.0</string>
+        <string>--port</string>
+        <string>8000</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/amithvasan/git/repository/Sorry</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Users/amithvasan/Library/Android/sdk/platform-tools</string>
+        <key>PYTHONUNBUFFERED</key>
+        <string>1</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/amithvasan/git/repository/Sorry/webapp/runs/server.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/amithvasan/git/repository/Sorry/webapp/runs/server.log</string>
+</dict>
+</plist>
