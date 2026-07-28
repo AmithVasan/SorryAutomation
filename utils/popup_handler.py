@@ -140,6 +140,9 @@ POPUP_PRIORITY = [
     # HIGH
     [
         "/Canvas/ModalLayer/SeasonPassPurchaseModal(Clone)/rootMain/closeCTA/touchArea",
+        # Bump To Spin Royal Pass — test_14 ignores this during purchase;
+        # auto-closed here on any incidental appearance outside the test.
+        "/Canvas/ModalLayer/BumpToSpinRoyalPassModal(Clone)/rootmain/Layout/TopPivotContainer/content/crossButton/touchArea",
         "/Canvas/ModalLayer/ConnectToFacebookModal(Clone)/rootMain/closeButton/touchArea",
         "/Canvas/ModalLayer/EndlessSalePopup(Clone)/closegrp/closeCTA/touchArea",
         # Piggy Bank — test_06_piggy_bank ignores this during purchase;

@@ -531,6 +531,67 @@ HF_BTS_FREE_AMMO_COUNT = "/Canvas/ModalLayer/FreeBTSAmmoClaimModal(Clone)/rootMa
 HF_BTS_CLAIM           = "/Canvas/ModalLayer/FreeBTSAmmoClaimModal(Clone)/rootMain/CTA_Green/TouchArea"
 HF_BTS_CLOSE           = "/Canvas/ModalLayer/BumpToSpinModal(Clone)/root/headerButtons/closeButton/SorryButtonType-close/touchArea"
 
+# -----------------------------------------------------------------------
+# BUMP TO SPIN (BTS) — full event-play test (test_14_bumptospin)
+# Spin-wheel event: multiplier + hold-to-autospin (SAME mechanic as Beach
+# Buddies) that fills a 15-tier reward track (free + royal/paid claims, like
+# Season Pass) gated behind a Royal Pass IAP.  Reuses the HF_BTS_* icon/claim/
+# close constants above; PAWN_REWARDS_EQUIP + LOOTBOX_CLAIM for the reward
+# screens surfaced while claiming.
+# -----------------------------------------------------------------------
+_BTS_MAIN = "/Canvas/ModalLayer/BumpToSpinModal(Clone)"
+
+# Lobby icon + "screen is open" marker
+BTS_ICON                = HF_BTS_ICON
+BTS_MODAL               = _BTS_MAIN                       # present ⇒ BTS screen open
+
+# FTUE free-ammo claim modal (first open) — detect, log the free ammo, claim
+BTS_FTUE_MODAL          = "/Canvas/ModalLayer/FreeBTSAmmoClaimModal(Clone)/darkBG"
+BTS_FREE_AMMO_MODAL     = HF_BTS_FTUE_MODAL               # the modal root
+BTS_FREE_AMMO_CONTAINER = "/Canvas/ModalLayer/FreeBTSAmmoClaimModal(Clone)/rootMain/reward"
+BTS_FREE_AMMO_COUNT     = HF_BTS_FREE_AMMO_COUNT          # exact node (index varies → also subtree-scanned)
+BTS_CLAIM               = HF_BTS_CLAIM                    # CTA_Green — claim free ammo
+
+# Total ammo in hand (ticket counter on the BTS modal)
+BTS_TOTAL_AMMO          = _BTS_MAIN + "/root/ticketCounter/root/TextStyle_bodyText_small/text"
+
+# Spin multiplier (x1→x2→x3→x4→x5→x10) — identical mechanic to Beach Buddies.
+_BTS_MULT               = _BTS_MAIN + "/root/verticalLayout/RollContainer/rollButtonParent/spinButton/root/hooks/rightCornerGrp/Multiplier"
+BTS_MULT_HIGHEST        = _BTS_MULT + "/root/value_Highest"   # active ⇒ x10 (highest)
+BTS_MULT_NORMAL         = _BTS_MULT + "/root/value_Normal"    # current multiplier text
+BTS_MULT_BUTTON         = _BTS_MULT                            # tap to cycle the multiplier
+
+# Spin button — long-press to autospin (identical mechanic to Beach Buddies)
+BTS_SPIN_BTN            = _BTS_MAIN + "/root/verticalLayout/RollContainer/rollButtonParent/spinButton/TouchArea"
+
+# Tier progress tooltip — reads "xxx/xxx"; equal numerator/denominator ⇒ every
+# tier unlocked.  Numbers differ per event, so parse them, never hardcode.
+BTS_PROGRESS            = _BTS_MAIN + "/root/verticalLayout/mainSection/toolTipViewportMask/tooltipLayer/tierProgressTooltip/TextStyle_Hud-Black/text"
+
+# Royal Pass purchase
+BTS_ACTIVATE_BTN        = _BTS_MAIN + "/root/verticalLayout/mainSection/activateButton/SorryButtonType-Text/TouchArea"
+BTS_ROYAL_MODAL         = "/Canvas/ModalLayer/BumpToSpinRoyalPassModal(Clone)"
+BTS_ROYAL_CLOSE         = "/Canvas/ModalLayer/BumpToSpinRoyalPassModal(Clone)/rootmain/Layout/TopPivotContainer/content/crossButton/touchArea"
+BTS_ROYAL_BUY           = "/Canvas/ModalLayer/BumpToSpinRoyalPassModal(Clone)/rootmain/Layout/TopPivotContainer/content/CTA/TouchArea"
+BTS_PURCHASE_SUCCESS    = "/Canvas/ModalLayer/PurchaseNotifModal(Clone)/darkBG"
+BTS_PURCHASE_OK         = "/Canvas/ModalLayer/PurchaseNotifModal(Clone)/rootMain/ButtonLayer/Okay Button/TouchArea"
+
+# Reward screens that surface WHILE claiming tiers (handled + dismissed):
+#   • Pawn cosmetic equip card → tap Equip (equips the cosmetic we verify later)
+#   • Lootbox reward screen    → tap-to-continue (same node as the Shop lootbox)
+BTS_EQUIP_BTN           = PAWN_REWARDS_EQUIP
+BTS_LOOTBOX_CLAIM       = LOOTBOX_CLAIM
+
+# Tier reward track (scrollView).  Items are BumpToSpinTierScrollItem_1..N
+# (15 today: tiers 1-14 claimable, tier 15 auto-granted).  Indexed dynamically
+# so the test scales if tiers are added/removed — mirrors the Treasure Island
+# chest subtree-scan.  Each tier carries a free + a royal/paid claim button.
+BTS_TIER_CONTENT        = _BTS_MAIN + "/root/verticalLayout/mainSection/scrollView/viewport/content"
+BTS_TIER_ITEM_TMPL      = BTS_TIER_CONTENT + "/BumpToSpinTierScrollItem_{n}"
+
+# Main modal close → back to lobby
+BTS_CLOSE               = HF_BTS_CLOSE
+
 # --- Social Lobby ---
 HF_SOCIAL_ICON         = "/Canvas/uiLayer/btmContent/lobbyBtmContent/lobbyBtmGrp/footerSection/Icons_Layout/Soical/SoicalIcon/icon"
 HF_SOCIAL_TAB_RECENT   = "/Canvas/uiLayer/TableManager/layout/viewPort/content/FriendsTab/rootMain/container/FriendsModal/tabsHandler/tabs/Recent/inactiveTab"

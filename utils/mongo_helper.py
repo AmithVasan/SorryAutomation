@@ -227,6 +227,55 @@ def set_treasure_island_ammo(player_id, ammo=900):
 
 
 # -------------------------------
+# BUMP TO SPIN (BTS) — TOP UP EVENT AMMO
+# -------------------------------
+def set_bump_to_spin_ammo(player_id, ammo=500):
+    """
+    Set the Bump To Spin (BTS) available ammo for a player.
+
+    Writes bmpToSpn.ammo so there are enough spins to fill every tier.
+    (Field verified against a live doc: `ammo` sits directly under the
+    top-level `bmpToSpn` object, alongside `pnts`, `isRylPsActv`,
+    `frePsClms`, `rylPsClms`.)  Call this while the game is KILLED, then
+    launch, so the boosted value is loaded fresh and not overwritten by the
+    running game on shutdown.
+
+    Returns True on success, False otherwise.
+    """
+    if not player_id:
+        logging.warning("⚠️ set_bump_to_spin_ammo called with empty player_id")
+        return False
+
+    try:
+        db = get_client()[DB_NAME]
+        collection = db[COLLECTION_NAME]
+
+        user = collection.find_one({"info.gameCode": player_id})
+        old_ammo = (
+            user.get("bmpToSpn", {}).get("ammo", 0) if user else 0
+        )
+
+        result = collection.update_one(
+            {"info.gameCode": player_id},
+            {"$set": {"bmpToSpn.ammo": ammo}},
+        )
+
+        if result.matched_count == 0:
+            logging.warning(f"⚠️ Player {player_id} not found — cannot set BTS ammo")
+            return False
+
+        logging.info(
+            f"🎡 Bump To Spin ammo set → bmpToSpn.ammo: "
+            f"{old_ammo} → {ammo} (player {player_id})"
+        )
+        return True
+
+    except Exception as e:
+        logging.error(f"❌ Mongo error in set_bump_to_spin_ammo: {e}")
+        return False
+
+
+# -------------------------------
 # GET USER SNAPSHOT (OPTIONAL)
 # -------------------------------
 def get_user_from_db(player_id):
