@@ -961,7 +961,9 @@ def _device_worker(
             driver.quit()
         except Exception:
             pass
-        teardown_reverse_forward(device_id)
+        # Reverse port forwarding is intentionally LEFT ACTIVE after the run
+        # (not torn down) so the device keeps routing 127.0.0.1:13000 → host.
+        # teardown_reverse_forward(device_id)
 
 
 # -------------------------------
@@ -1068,7 +1070,9 @@ def _run_single_device(run_type="complete", individual_tests=None):
         # Session already dead (e.g. killed by Google Play IAP flow) — not an error
         logging.info("ℹ️ Appium session already closed — nothing to clean up")
 
-    teardown_reverse_forward(device_id)
+    # Reverse port forwarding is intentionally LEFT ACTIVE after the run (not
+    # torn down) so the device keeps routing 127.0.0.1:13000 → host.
+    # teardown_reverse_forward(device_id)
 
 
 # -------------------------------

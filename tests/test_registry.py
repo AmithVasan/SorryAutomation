@@ -15,17 +15,17 @@ TEST_REGISTRY = [
     },
 
     {
-        "file": "test_08_season_pass.py",
-        "function": "test_season_pass",
-        "name": "Season Pass",
-        "type": ["iap", "regression", "complete"]
-    },
-
-    {
         "file": "test_03_shop.py",
         "function": "test_shop_purchase",
         "name": "Shop Purchase",
         "type": ["smoke", "iap", "regression", "complete"]
+    },
+
+    {
+        "file": "test_08_season_pass.py",
+        "function": "test_season_pass",
+        "name": "Season Pass",
+        "type": ["iap", "regression", "complete"]
     },
 
     {
@@ -88,6 +88,13 @@ TEST_REGISTRY = [
         "file": "test_13_treasureisland.py",
         "function": "test_treasure_island",
         "name": "Treasure Island",
+        "type": ["complete"]
+    },
+
+    {
+        "file": "test_14_bumptospin.py",
+        "function": "test_bump_to_spin",
+        "name": "Bump To Spin",
         "type": ["complete"]
     },
 

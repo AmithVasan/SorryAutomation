@@ -47,15 +47,16 @@ def _tap_screen_center():
     ])
 
 # -------------------------------
-# SMOKE / REGRESSION / BAT SUBSETS
-# Overrides the full pack list for non-complete runs
+# SUBSET PACKS  (1 gold + 1 gem + Common x1 + Legendary x3)
+# Used by every run type EXCEPT "iap" — only the IAP run buys ALL packs.
 # -------------------------------
 SMOKE_GOLD_PACKS    = {"Gold 500K"}
 SMOKE_GEM_PACKS     = {"6000 Gems"}
 SMOKE_LOOTBOX_PACKS = {"Common x1", "Legendary x3"}
 
-# Run types that use the subset (everything else → full list)
-SUBSET_RUN_TYPES = {"smoke", "regression", "bat"}
+# Run types that use the subset (everything else → full list).
+# "complete" now buys the same subset as smoke — only "iap" buys every pack.
+SUBSET_RUN_TYPES = {"smoke", "regression", "bat", "complete"}
 
 
 # -------------------------------

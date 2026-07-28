@@ -121,6 +121,50 @@ def restart_game():
 
 
 # ---------------------------------------------------
+# FRESH LAUNCH AFTER SEASON PASS
+# Season Pass can end deep inside reward/claim modals.  Do a clean cold
+# launch so the NEXT test starts from a fresh lobby: force-stop → launch →
+# reconnect AltTester → clear any popups / info screens that surface.
+# Returns the new unity_driver.
+# ---------------------------------------------------
+def fresh_launch_and_clear(unity_driver):
+
+    from utils.driver_manager import connect_altunity
+
+    logging.info("🔄 Fresh launch after Season Pass...")
+
+    try:
+        unity_driver.stop()
+    except Exception:
+        pass
+
+    restart_game()   # force-stop + cold launch + 10s settle
+
+    unity_driver = connect_altunity(alt_port=13000, app_name="sorry")
+    state.set("unity_driver", unity_driver)
+    logging.info("✅ AltTester reconnected after fresh launch")
+
+    # Clear any popups / info screens on the fresh lobby (two clean passes)
+    end = time.time() + 25
+    consecutive_clean = 0
+    while time.time() < end:
+        handled = handle_one_popup(unity_driver)
+        if not handled:
+            handled = run_handlers(unity_driver)
+        if not handled:
+            consecutive_clean += 1
+            if consecutive_clean >= 2:
+                break
+            time.sleep(0.5)
+        else:
+            consecutive_clean = 0
+            time.sleep(0.5)
+
+    logging.info("✅ Fresh lobby cleared after Season Pass")
+    return unity_driver
+
+
+# ---------------------------------------------------
 # OPEN SEASON PASS
 # ---------------------------------------------------
 
@@ -1354,6 +1398,14 @@ def test_season_pass(
 
         add_step(
             "✅ Season Pass Test Completed",
+            "PASS"
+        )
+
+        # Fresh launch so the NEXT test starts from a clean lobby
+        # (Season Pass can leave reward/claim modals or deep screens up).
+        unity_driver = fresh_launch_and_clear(unity_driver)
+        add_step(
+            "✅ Fresh app launch after Season Pass — continuing",
             "PASS"
         )
 
