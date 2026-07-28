@@ -69,6 +69,8 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
   margin-bottom: 18px;
 }
 .head h1 {
@@ -79,6 +81,18 @@ body {
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
+}
+/* Brand: shows a per-project logo image when one exists, else the emoji+name.
+   The logo auto-fits ANY aspect ratio and ANY screen: width & height stay
+   `auto` and are bounded by max-height / max-width, so the image scales DOWN
+   to fit the header without ever distorting or overflowing — whatever the
+   source resolution. */
+.brand { display: inline-flex; align-items: center; min-width: 0; }
+.project-logo {
+  width: min(300px, 60vw);   /* 300px wide (shrinks on tiny screens)            */
+  height: 112px;             /* tall box                                        */
+  object-fit: fill;          /* STRETCH to fill the box exactly, edge-to-edge   */
+  display: block;
 }
 
 .pill {
@@ -198,6 +212,11 @@ select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(109,139,2
   font-size: 0.78rem; cursor: pointer; transition: background 0.15s, border-color 0.15s;
 }
 .mini-btn:hover { background: rgba(255,255,255,0.12); border-color: var(--accent); }
+
+/* Test-field header row: uppercase label on the left, inline ⟳ Refresh on the right */
+.field-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.refresh-btn { text-transform: none; letter-spacing: 0; color: var(--text); font-weight: 600; }
+.refresh-btn.spin { opacity: 0.6; pointer-events: none; }
 
 /* read-only banner shown while viewing a past run */
 .ro-banner {

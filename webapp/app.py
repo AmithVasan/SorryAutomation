@@ -50,11 +50,34 @@ PYTHON = os.environ.get("SAT_PYTHON", sys.executable)
 
 # Make tests.test_registry importable for the test dropdown (pure metadata).
 sys.path.insert(0, str(REPO_ROOT))
+import importlib
 try:
-    from tests.test_registry import TEST_REGISTRY
-    TESTS = [t["name"] for t in TEST_REGISTRY]
+    import tests.test_registry as _registry_mod
 except Exception:
-    TESTS = []
+    _registry_mod = None
+
+
+def _load_test_names():
+    """(Re)read the test registry from disk so newly-added tests show up
+    WITHOUT a server restart.
+
+    The registry is pure metadata (a list of dicts) with no import side
+    effects, so reloading it is safe.  Used at startup, on every page load,
+    and by the /tests refresh endpoint (the ⟳ Refresh button)."""
+    global _registry_mod
+    try:
+        if _registry_mod is None:
+            import tests.test_registry as _rm
+            _registry_mod = _rm
+        else:
+            importlib.reload(_registry_mod)
+        return [t["name"] for t in _registry_mod.TEST_REGISTRY]
+    except Exception as e:
+        logging.warning(f"[tests] could not load registry: {e}")
+        return []
+
+
+TESTS = _load_test_names()
 
 RUN_TYPES = ["smoke", "regression", "iap", "bat", "complete"]
 
@@ -330,7 +353,7 @@ def index(request: Request):
         {
             "projects": PROJECTS,
             "run_types": RUN_TYPES,
-            "tests": TESTS,
+            "tests": _load_test_names(),   # fresh each page load — no restart needed
         },
     )
 
@@ -363,6 +386,16 @@ def history():
 def branches():
     b = _list_branches()
     return JSONResponse({"branches": b["ordered"], "current": b["current"]})
+
+
+@app.get("/tests")
+def tests():
+    """Re-read the test registry and return the current test names.  Backs the
+    ⟳ Refresh button so newly-added feature tests appear without a server
+    restart.  Also refreshes the module-level TESTS cache."""
+    global TESTS
+    TESTS = _load_test_names()
+    return JSONResponse({"tests": TESTS})
 
 
 @app.get("/log", response_class=PlainTextResponse)

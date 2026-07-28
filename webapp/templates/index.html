@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Automation Runner</title>
-  <link rel="stylesheet" href="/static/style.css" />
+  <link rel="stylesheet" href="/static/style.css?v=6" />
 </head>
 <body>
   <div class="bg-fx"></div>
@@ -12,7 +12,10 @@
 
   <main class="card">
     <header class="head">
-      <h1>🎮 <span id="title-project">Automation</span></h1>
+      <h1 class="brand">
+        <img id="project-logo" class="project-logo hidden" alt="" />
+        <span id="brand-text">🎮 <span id="title-project">Automation</span></span>
+      </h1>
       <div id="device-pill" class="pill pill-free">
         <span class="dot"></span><span id="device-text">Free</span>
       </div>
@@ -51,12 +54,18 @@
         </select>
       </label>
 
-      <label class="field hidden" id="test-field">
-        <span>Test</span>
+      <div class="field hidden" id="test-field">
+        <span class="field-head">
+          Test
+          <button type="button" id="refresh-tests" class="mini-btn refresh-btn"
+                  title="Reload the test list from the server — picks up newly added feature tests without restarting the server">
+            ⟳ Refresh list
+          </button>
+        </span>
         <select name="test" id="test">
           {% for t in tests %}<option value="{{ t }}">{{ t }}</option>{% endfor %}
         </select>
-      </label>
+      </div>
 
       <div class="toggles">
         <label class="switch">
@@ -126,6 +135,7 @@
       r.setProperty("--accent2", t.a2);
       document.getElementById("title-project").textContent = name;
       applyProjectBg(name);
+      applyProjectLogo(name);
     }
 
     // Custom per-project background image (optional): drop a file named
@@ -153,6 +163,37 @@
           document.body.classList.add('has-bg-image');
         };
         probe.onerror = tryNext;             // try next extension, else fall back
+        probe.src = url;
+      };
+      tryNext();
+    }
+
+    // Custom per-project LOGO (optional): drop a file named <slug>.<ext> into
+    // webapp/static/logo/ and it replaces the "🎮 <project>" title text
+    // automatically. If none is found we fall back to the emoji + name.
+    // Slugs: "Sorry! World"→sorry-world, "Ludo Star"→ludo-star, etc.
+    const LOGO_EXTS = ['png', 'svg', 'webp', 'jpg', 'jpeg'];
+    function applyProjectLogo(name) {
+      const img = document.getElementById('project-logo');
+      const txt = document.getElementById('brand-text');
+      const base = '/static/logo/' + slug(name);
+      let i = 0;
+      const tryNext = () => {
+        if (i >= LOGO_EXTS.length) {          // no logo → show emoji + name
+          img.classList.add('hidden');
+          img.removeAttribute('src');
+          txt.classList.remove('hidden');
+          return;
+        }
+        const url = base + '.' + LOGO_EXTS[i++];
+        const probe = new Image();
+        probe.onload = () => {
+          img.src = url;
+          img.alt = name;
+          img.classList.remove('hidden');
+          txt.classList.add('hidden');        // logo replaces the emoji + name
+        };
+        probe.onerror = tryNext;              // try next extension, else fall back
         probe.src = url;
       };
       tryNext();
@@ -492,6 +533,40 @@
       });
       if ([...sel.options].some(o => o.value === keep) && keep) sel.value = keep;
       else if (d.current) sel.value = d.current;
+    }
+
+    // ── Test list refresh (picks up newly-added tests, no server restart) ───────
+    async function loadTests(preserve = true) {
+      let d;
+      try { d = await (await fetch('/tests')).json(); } catch (e) { return -1; }
+      const sel = document.getElementById('test');
+      const keep = sel.value;
+      sel.innerHTML = '';
+      (d.tests || []).forEach(t => {
+        const o = document.createElement('option');
+        o.value = t; o.textContent = t;
+        sel.appendChild(o);
+      });
+      if (preserve && keep && [...sel.options].some(o => o.value === keep)) sel.value = keep;
+      return (d.tests || []).length;
+    }
+
+    const refreshTestsBtn = document.getElementById('refresh-tests');
+    if (refreshTestsBtn) {
+      refreshTestsBtn.addEventListener('click', async () => {
+        const before = document.getElementById('test').options.length;
+        refreshTestsBtn.classList.add('spin');
+        refreshTestsBtn.textContent = '⟳ Refreshing…';
+        const count = await loadTests(true);
+        refreshTestsBtn.classList.remove('spin');
+        if (count < 0) {
+          refreshTestsBtn.textContent = '⚠ Failed';
+        } else {
+          const added = count - before;
+          refreshTestsBtn.textContent = added > 0 ? `✓ +${added} new` : '✓ Up to date';
+        }
+        setTimeout(() => { refreshTestsBtn.textContent = '⟳ Refresh list'; }, 2500);
+      });
     }
 
     setInterval(pollStatus, 1500);
