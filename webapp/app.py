@@ -610,6 +610,81 @@ def bridge_script():
     return FileResponse(str(p), media_type="text/x-python", filename="bridge.py")
 
 
+# ── One-command onboarding ─────────────────────────────────────────────────────
+# The server hands the laptop a ready-to-run installer with SAT_SERVER already
+# filled in (the origin the client used to reach us, so it's reachable back).
+# It only sets up the thin device bridge — the test scripts + AltTester license
+# stay here and never touch the laptop.
+_INSTALL_SH = r'''#!/usr/bin/env bash
+# Automation Runner — device bridge installer (macOS / Linux).
+set -e
+SERVER="__SERVER__"
+echo "== Automation Runner — device bridge setup =="
+echo "   server: $SERVER"
+
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "X  python3 not found. Install Python 3, then re-run this command."
+  exit 1
+fi
+
+if ! command -v adb >/dev/null 2>&1; then
+  echo ".. adb (Android platform-tools) not found."
+  if command -v brew >/dev/null 2>&1; then
+    echo ".. installing android-platform-tools via Homebrew..."
+    brew install android-platform-tools
+  else
+    echo "X  Install Android platform-tools, then re-run:"
+    echo "     macOS:  brew install android-platform-tools"
+    echo "     Linux:  sudo apt-get install -y android-tools-adb"
+    exit 1
+  fi
+fi
+
+BRIDGE="$(mktemp -d)/bridge.py"
+echo ".. downloading bridge..."
+curl -fsSL "$SERVER/bridge.py" -o "$BRIDGE"
+echo "OK starting bridge — leave this window open (Ctrl+C to stop)."
+echo "   On the device tap 'Allow USB debugging'. On macOS click 'Allow' if the firewall prompts."
+exec env SAT_SERVER="$SERVER" python3 "$BRIDGE"
+'''
+
+_INSTALL_PS1 = r'''# Automation Runner - device bridge installer (Windows PowerShell). Best-effort.
+$ErrorActionPreference = "Stop"
+$Server = "__SERVER__"
+Write-Host "== Automation Runner - device bridge setup =="
+Write-Host "   server: $Server"
+$py = Get-Command python -ErrorAction SilentlyContinue
+if (-not $py) { $py = Get-Command python3 -ErrorAction SilentlyContinue }
+if (-not $py) { Write-Host "X  Python 3 not found - install from python.org, then re-run."; exit 1 }
+if (-not (Get-Command adb -ErrorAction SilentlyContinue)) {
+  Write-Host "X  adb not found - install Android platform-tools + add to PATH, then re-run."; exit 1
+}
+$Bridge = Join-Path $env:TEMP "sat_bridge.py"
+Write-Host ".. downloading bridge..."
+Invoke-WebRequest "$Server/bridge.py" -OutFile $Bridge -UseBasicParsing
+$env:SAT_SERVER = $Server
+Write-Host "OK starting bridge - leave this window open (Ctrl+C to stop)."
+& $py.Source $Bridge
+'''
+
+
+def _server_base(request: Request) -> str:
+    """Origin the client used to reach us — reachable back from that same client."""
+    return str(request.base_url).rstrip("/")
+
+
+@app.get("/install.sh")
+def install_sh(request: Request):
+    return PlainTextResponse(_INSTALL_SH.replace("__SERVER__", _server_base(request)),
+                             media_type="text/x-shellscript")
+
+
+@app.get("/install.ps1")
+def install_ps1(request: Request):
+    return PlainTextResponse(_INSTALL_PS1.replace("__SERVER__", _server_base(request)),
+                             media_type="text/plain")
+
+
 @app.get("/runinfo")
 def runinfo(run_id: str = ""):
     """Status of any run (local or agent) read from its metadata file. Lets the

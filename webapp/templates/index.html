@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Automation Runner</title>
-  <link rel="stylesheet" href="/static/style.css?v=6" />
+  <link rel="stylesheet" href="/static/style.css?v=7" />
 </head>
 <body>
   <div class="bg-fx"></div>
@@ -91,7 +91,32 @@
     </section>
 
     <section class="agents-panel">
-      <div class="agents-head">Remote devices <span class="hint">— uses the options selected above</span></div>
+      <div class="agents-head">
+        <span>Remote devices <span class="hint">— uses the options selected above</span></span>
+        <button type="button" id="onboard-btn" class="mini-btn" onclick="toggleOnboard()">＋ Add a device</button>
+      </div>
+
+      <div id="onboard" class="onboard hidden">
+        <div class="onboard-step">
+          <b>Run one command on the laptop with your device plugged in.</b>
+          It sets up a tiny bridge so this server can drive your device — the test scripts &amp; license stay on the server.
+        </div>
+        <div class="os-tabs">
+          <button type="button" class="os-tab active" data-os="unix" onclick="setOnboardOS('unix')">macOS / Linux</button>
+          <button type="button" class="os-tab" data-os="win" onclick="setOnboardOS('win')">Windows</button>
+        </div>
+        <div class="cmd-row">
+          <code id="onboard-cmd"></code>
+          <button type="button" class="mini-btn" id="copy-cmd" onclick="copyOnboardCmd()">⧉ Copy</button>
+        </div>
+        <div class="onboard-note">
+          Needs <code>python3</code> + <code>adb</code> (the installer adds adb via Homebrew on macOS).
+          Appium is required only for IAP / shop-buy-all tests — everything else runs without it.
+          On the device tap <b>Allow USB debugging</b>; on macOS click <b>Allow</b> if the firewall prompts.
+        </div>
+        <div id="onboard-status" class="onboard-status">Waiting for your device to appear here…</div>
+      </div>
+
       <div id="agents"><div class="agent-empty">No remote agents connected.</div></div>
     </section>
 
@@ -220,6 +245,8 @@
     let currentRun = null;
     let startedAt = null;
     let isAgentRun = false;       // true when the shown run is on a remote agent
+    let onboardOS = 'unix';       // "Add a device" panel: selected OS
+    let onboardOpen = false;      // "Add a device" panel: visible?
 
     // ── Project selection: theme + runnable gating ────────────────────────────
     function projectRunnable() {
@@ -418,6 +445,7 @@
     async function loadAgents() {
       let list = [];
       try { list = (await (await fetch('/agents')).json()).agents || []; } catch (e) { return; }
+      if (onboardOpen) updateOnboardStatus(list);
       const box = document.getElementById('agents');
       if (!list.length) {
         box.innerHTML = '<div class="agent-empty">No remote agents connected.</div>';
@@ -497,6 +525,72 @@
       startedAt = Math.floor(Date.now() / 1000);
       statusLabel.textContent = '● Running — ' + j.label;
       loadHistory();
+    }
+
+    // ── "Add a device" onboarding ───────────────────────────────────────────────
+    // The webapp hands the laptop ONE command (server address pre-filled from the
+    // browser's own origin, so it's reachable back), then auto-detects when the
+    // device connects. The browser can't set up the laptop itself — the sandbox
+    // forbids installing/spawning/USB — so one laptop-side command is the floor.
+    function onboardCmd() {
+      const o = location.origin;
+      return onboardOS === 'win'
+        ? 'powershell -c "irm ' + o + '/install.ps1 | iex"'
+        : 'curl -fsSL ' + o + '/install.sh | bash';
+    }
+    function renderOnboardCmd() {
+      const c = document.getElementById('onboard-cmd');
+      if (c) c.textContent = onboardCmd();
+    }
+    function setOnboardOS(os) {
+      onboardOS = os;
+      document.querySelectorAll('.os-tab').forEach(t => t.classList.toggle('active', t.dataset.os === os));
+      renderOnboardCmd();
+    }
+    function toggleOnboard() {
+      const p = document.getElementById('onboard');
+      onboardOpen = !p.classList.toggle('hidden');   // toggle returns true when now-hidden
+      const btn = document.getElementById('onboard-btn');
+      if (onboardOpen) { renderOnboardCmd(); loadAgents(); btn.textContent = '× Close'; }
+      else { btn.textContent = '＋ Add a device'; }
+    }
+    async function copyOnboardCmd() {
+      const ok = await copyToClipboard(onboardCmd());
+      const b = document.getElementById('copy-cmd');
+      const old = b.textContent;
+      b.textContent = ok ? '✓ Copied' : '⚠ select + copy';
+      setTimeout(() => { b.textContent = old; }, 1400);
+    }
+    // Live: reflect what /agents shows while the panel is open.
+    function updateOnboardStatus(list) {
+      const el = document.getElementById('onboard-status');
+      if (!el) return;
+      const online = list.filter(a => a.status === 'idle' || a.status === 'busy');
+      const withDev = online.filter(a => a.devices && a.devices.length);
+      if (withDev.length) {
+        const names = withDev.map(a => a.name + ' (' + a.devices.join(', ') + ')').join(', ');
+        el.className = 'onboard-status ok';
+        el.innerHTML = '✅ Connected: <b>' + names + '</b> — pick a test above, then click <b>▶ Run here</b> below.';
+      } else if (online.length) {
+        el.className = 'onboard-status';
+        el.textContent = '● Bridge connected — waiting for the device (plug it in + tap “Allow USB debugging”)…';
+      } else {
+        el.className = 'onboard-status';
+        el.textContent = 'Waiting for your device to appear here… (run the command on the laptop)';
+      }
+    }
+    // HTTP-safe clipboard (LAN access is plain-HTTP, where the async API is blocked).
+    async function copyToClipboard(text) {
+      try {
+        if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(text); return true; }
+      } catch (e) { /* fall through */ }
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = text; ta.setAttribute('readonly', '');
+        ta.style.position = 'fixed'; ta.style.top = '-1000px'; ta.style.opacity = '0';
+        document.body.appendChild(ta); ta.focus(); ta.select(); ta.setSelectionRange(0, text.length);
+        const ok = document.execCommand('copy'); document.body.removeChild(ta); return ok;
+      } catch (e) { return false; }
     }
 
     // ── Submit ────────────────────────────────────────────────────────────────

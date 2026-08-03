@@ -228,7 +228,8 @@ select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(109,139,2
 
 /* Remote agents panel */
 .agents-panel { margin: 6px 0 14px; }
-.agents-head { font-size: 0.78rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 8px; }
+.agents-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 0.78rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 8px; }
+#onboard-btn { text-transform: none; letter-spacing: 0; font-weight: 600; flex: 0 0 auto; }
 .agents-head .hint { text-transform: none; letter-spacing: 0; opacity: 0.7; }
 .agent-empty { font-size: 0.85rem; color: var(--muted); padding: 8px 0; }
 .agent-row {
@@ -269,3 +270,33 @@ body.has-bg-image .bg-image::after {   /* readability scrim over the image */
   inset: 0;
   background: linear-gradient(160deg, rgba(11,16,32,0.82), rgba(11,16,32,0.66));
 }
+
+/* "Add a device" onboarding panel */
+.onboard {
+  margin: 4px 0 12px; padding: 14px;
+  background: rgba(10,14,28,0.55); border: 1px solid var(--stroke); border-radius: 12px;
+  display: flex; flex-direction: column; gap: 10px;
+}
+.onboard-step { font-size: 0.86rem; color: var(--text); line-height: 1.5; }
+.os-tabs { display: flex; gap: 8px; }
+.os-tab {
+  background: rgba(255,255,255,0.05); color: var(--muted);
+  border: 1px solid var(--stroke); border-radius: 8px; padding: 5px 12px;
+  font-size: 0.8rem; cursor: pointer; transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+.os-tab.active { color: var(--text); border-color: var(--accent); background: rgba(109,139,255,0.12); }
+.cmd-row { display: flex; align-items: stretch; gap: 8px; }
+.cmd-row code {
+  flex: 1 1 auto; min-width: 0; overflow-x: auto; white-space: nowrap;
+  background: #05070f; color: #b8e6c8; border: 1px solid var(--stroke); border-radius: 8px;
+  padding: 10px 12px; font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 0.8rem;
+}
+.cmd-row .mini-btn { flex: 0 0 auto; }
+.onboard-note { font-size: 0.78rem; color: var(--muted); line-height: 1.5; }
+.onboard-note code { background: rgba(255,255,255,0.07); padding: 1px 5px; border-radius: 5px; color: var(--text); }
+.onboard-status {
+  font-size: 0.82rem; color: var(--busy);
+  background: rgba(255,207,92,0.08); border: 1px solid rgba(255,207,92,0.25);
+  padding: 7px 11px; border-radius: 9px;
+}
+.onboard-status.ok { color: var(--ok); background: rgba(47,224,138,0.08); border-color: rgba(47,224,138,0.30); }
