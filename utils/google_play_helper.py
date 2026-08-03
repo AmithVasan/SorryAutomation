@@ -443,7 +443,7 @@ def reconnect_appium_no_launch(old_driver):
         # No appPackage / appActivity → don't launch anything, just attach
 
         new_driver = appium_webdriver.Remote(
-            "http://127.0.0.1:4723", options=options
+            os.getenv("SAT_APPIUM_URL", "http://127.0.0.1:4723"), options=options
         )
         logging.info("✅ [GP] Appium session restarted (no-launch)")
         return new_driver

@@ -87,10 +87,18 @@ def set_driver(
     # whole suite; the purchase flow revives it defensively regardless.
     options.set_capability("newCommandTimeout", 3600)
 
-    logging.info("🚀 Starting Appium driver...")
+    # Remote-device mode (Phase 2): Appium runs on the laptop next to the device
+    # (via SAT_APPIUM_URL), so its adb is LOCAL and already sees the device —
+    # we just pin the exact device by udid. No-op for local runs.
+    if os.getenv("SAT_ADB_HOST") or os.getenv("SAT_DEVICE_ID"):
+        options.set_capability("udid", device_id)
+        logging.info(f"🌐 Remote-device mode → pinned udid {device_id}")
+
+    appium_url = os.getenv("SAT_APPIUM_URL", "http://127.0.0.1:4723")
+    logging.info(f"🚀 Starting Appium driver ({appium_url})...")
 
     driver = webdriver.Remote(
-        command_executor="http://127.0.0.1:4723",
+        command_executor=appium_url,
         options=options
     )
 

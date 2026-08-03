@@ -111,3 +111,34 @@ def detect_apk_folder():
     builds = repo_root / "builds"
     builds.mkdir(parents=True, exist_ok=True)
     return str(builds)
+
+
+# ── Remote-device mode (Phase 2: run the server's scripts against a device
+#    plugged into a teammate's laptop) ────────────────────────────────────────
+def remote_adb_target():
+    """Return (host, port) when this run should drive a device attached to a
+    REMOTE adb server — a teammate's laptop running the bridge — else
+    (None, None).  Configured via env:
+        SAT_ADB_HOST=<laptop-ip>   [SAT_ADB_PORT=5038]
+    """
+    host = _env("SAT_ADB_HOST", "SAT_REMOTE_ADB")
+    if not host:
+        return (None, None)
+    return (host, os.environ.get("SAT_ADB_PORT", "5038"))
+
+
+def apply_remote_adb():
+    """If a remote adb target is set, point BOTH the adb CLI and Appium's adb at
+    it by exporting the standard adb env vars.  Every ``subprocess`` adb call and
+    the reverse-forwarding then target the remote device with no other change.
+
+    Idempotent and no-op when unset, so local runs are completely unchanged.
+    Returns 'host:port' when remote mode is active, else None.
+    """
+    host, port = remote_adb_target()
+    if not host:
+        return None
+    os.environ["ADB_SERVER_SOCKET"]       = f"tcp:{host}:{port}"   # adb CLI
+    os.environ["ANDROID_ADB_SERVER_HOST"] = host                    # appium-adb
+    os.environ["ANDROID_ADB_SERVER_PORT"] = str(port)
+    return f"{host}:{port}"

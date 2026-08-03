@@ -39,6 +39,7 @@ except Exception:
 # original Mac paths still take precedence — see utils/env_config.py.
 from utils.env_config import (
     detect_adb, detect_appium, detect_emulator, detect_apk_folder,
+    apply_remote_adb,
 )
 
 APK_FOLDER = detect_apk_folder()
@@ -51,10 +52,17 @@ EMULATOR_PATH = detect_emulator()
 PACKAGE_NAME = "com.gameberry.sorry.card.board.game"
 ACTIVITY_NAME = "com.unity3d.player.SorryUnityPlayerActivity"
 
-APPIUM_URL = "http://127.0.0.1:4723"
+APPIUM_URL = os.environ.get("SAT_APPIUM_URL", "http://127.0.0.1:4723")
 
 ALTTESTER_PORT = 13000
 APP_NAME = "sorry"
+
+# --- REMOTE DEVICE MODE (Phase 2) ---
+# When SAT_ADB_HOST is set, point adb + Appium at a device plugged into a
+# teammate's laptop bridge (utils/env_config.apply_remote_adb). Runs at import,
+# BEFORE start_appium()/get_device_id(), so every adb call + reverse-forward
+# targets the remote device. No-op when unset → local runs are unchanged.
+REMOTE_ADB = apply_remote_adb()
 
 # --- WIFI ADB CONFIG ---
 #
@@ -125,11 +133,10 @@ def _appium_healthy(timeout=3):
     import urllib.request
     import urllib.error
     deadline = time.time() + timeout
+    status_url = APPIUM_URL.rstrip("/") + "/status"
     while time.time() < deadline:
         try:
-            with urllib.request.urlopen(
-                "http://127.0.0.1:4723/status", timeout=2
-            ) as resp:
+            with urllib.request.urlopen(status_url, timeout=2) as resp:
                 if resp.status == 200:
                     return True
         except Exception:
@@ -139,6 +146,18 @@ def _appium_healthy(timeout=3):
 
 def start_appium():
     logging.info("🚀 Checking Appium server...")
+
+    # Remote Appium (Phase 2): when SAT_APPIUM_URL points off-box, Appium runs
+    # on the teammate's laptop next to the device (UiAutomator2 must be
+    # co-located with the device). Don't start a local one — just verify it.
+    if "127.0.0.1" not in APPIUM_URL and "localhost" not in APPIUM_URL:
+        logging.info(f"🌐 Using REMOTE Appium at {APPIUM_URL}")
+        if _appium_healthy(timeout=30):
+            logging.info("✅ Remote Appium reachable and healthy")
+            return
+        raise RuntimeError(
+            f"❌ Remote Appium at {APPIUM_URL} not reachable — start Appium on the laptop bridge"
+        )
 
     if _appium_healthy(timeout=3):
         logging.info("✅ Appium already running and healthy")
@@ -328,6 +347,14 @@ def get_device_id():
       "x.x.x.x" → Static-IP mode. Connects directly to the given IP.
     """
     logging.info("🔍 Checking for connected devices...")
+
+    # Explicit serial override — makes device selection deterministic, e.g. in
+    # remote-device mode where `adb devices` (over the network bridge) may list
+    # the teammate's device. Set SAT_DEVICE_ID to pin it.
+    _forced = os.getenv("SAT_DEVICE_ID")
+    if _forced:
+        logging.info(f"🎯 Using forced device id (SAT_DEVICE_ID): {_forced}")
+        return _forced, False
 
     # --- Auto-WiFi mode ---
     if WIFI_DEVICE_IP == "auto":
