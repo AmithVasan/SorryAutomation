@@ -114,6 +114,7 @@ STATE = {
     "log_path": None,
     "proc": None,
     "stopped": False,     # set when the user clicks Stop
+    "agent_id": None,     # set when this server-run drives a remote bridge device
 }
 
 _SAFE_ID = re.compile(r"^[0-9_]+$")   # run_id is a timestamp → digits + "_" only
@@ -334,12 +335,22 @@ def _watch(proc, run_id, log_file):
         was_stopped = STATE["stopped"] and STATE["run_id"] == run_id
     status = "stopped" if was_stopped else ("passed" if rc == 0 else "failed")
     _write_meta(run_id, status=status, ended=time.time(), returncode=rc)
+    freed_agent = None
     with _lock:
         if STATE["run_id"] == run_id:
             STATE["running"] = False
             STATE["returncode"] = rc
             STATE["ended"] = time.time()
             STATE["proc"] = None
+            freed_agent = STATE.get("agent_id")
+            STATE["agent_id"] = None
+    # If this was a remote-device run, mark that bridge free again.
+    if freed_agent:
+        with _agents_lock:
+            a = AGENTS.get(freed_agent)
+            if a:
+                a["status"] = "idle"
+                a["run_id"] = None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -433,6 +444,7 @@ def run(
     slack: str = Form("off"),          # checkbox → "on" when ticked
     report: str = Form("off"),
     ref: str = Form(""),               # git branch to run (blank = current)
+    agent: str = Form(""),             # bridge id → run the scripts on ITS device
 ):
     if project not in _RUNNABLE:
         return JSONResponse(
@@ -440,6 +452,23 @@ def run(
              "error": f"'{project}' isn't configured to run on this server yet."},
             status_code=400,
         )
+
+    # Remote-device run: the scripts still run HERE on the server, but drive a
+    # device plugged into the selected bridge laptop (env injected below).
+    remote = None
+    if agent:
+        with _agents_lock:
+            a = AGENTS.get(agent)
+            if a is None:
+                return JSONResponse({"ok": False, "error": "Unknown device — is the bridge still connected?"}, status_code=404)
+            if a.get("status") == "busy":
+                return JSONResponse({"ok": False, "error": "That device is busy with a run."}, status_code=409)
+            devs = a.get("devices") or []
+            remote = {"agent_id": agent, "name": a.get("name", agent), "ip": a.get("ip"),
+                      "adb_port": a.get("adb_port") or 5038, "appium_url": a.get("appium_url"),
+                      "serial": devs[0] if devs else None}
+        if not remote["ip"] or not remote["serial"]:
+            return JSONResponse({"ok": False, "error": "Bridge has no device ready (plug in + enable USB debugging)."}, status_code=400)
 
     with _lock:
         if STATE["running"]:
@@ -477,6 +506,8 @@ def run(
             display = rt.capitalize()            # dropdown shows the run type
         cmd += ["--slack", "on" if slack == "on" else "off"]
         cmd += ["--report", "on" if report == "on" else "off"]
+        if remote:
+            label += f"  →  {remote['name']}"
 
         run_id = time.strftime("%Y%m%d_%H%M%S")
         log_path = RUNS_DIR / f"run_{run_id}.log"
@@ -484,6 +515,14 @@ def run(
 
         env = os.environ.copy()
         env["PYTHONUNBUFFERED"] = "1"   # stream logs promptly
+        if remote:
+            # Point adb + Appium at the bridge laptop's device
+            # (utils/env_config.apply_remote_adb reads these at run_this import).
+            env["SAT_ADB_HOST"] = remote["ip"]
+            env["SAT_ADB_PORT"] = str(remote["adb_port"])
+            env["SAT_DEVICE_ID"] = remote["serial"]
+            if remote["appium_url"]:
+                env["SAT_APPIUM_URL"] = remote["appium_url"]
 
         proc = subprocess.Popen(
             cmd,
@@ -497,8 +536,14 @@ def run(
         STATE.update(
             running=True, run_id=run_id, label=label, started=time.time(),
             ended=None, returncode=None, log_path=str(log_path), proc=proc,
-            stopped=False,
+            stopped=False, agent_id=(remote["agent_id"] if remote else None),
         )
+        if remote:
+            with _agents_lock:
+                ra = AGENTS.get(remote["agent_id"])
+                if ra:
+                    ra["status"] = "busy"
+                    ra["run_id"] = run_id
 
     _write_meta(run_id, project=project, label=label, display=display,
                 started=time.time(), status="running", returncode=None, ended=None)
@@ -528,11 +573,20 @@ def stop():
             return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
 
     # Always flip to Free — even if the process was already gone (stale state).
+    freed_agent = None
     with _lock:
         STATE["running"] = False
         STATE["proc"] = None
         if STATE["ended"] is None:
             STATE["ended"] = time.time()
+        freed_agent = STATE.get("agent_id")
+        STATE["agent_id"] = None
+    if freed_agent:
+        with _agents_lock:
+            a = AGENTS.get(freed_agent)
+            if a:
+                a["status"] = "idle"
+                a["run_id"] = None
     return JSONResponse({"ok": True})
 
 
@@ -542,6 +596,18 @@ def report():
     if not path.exists():
         return PlainTextResponse("No report available yet.", status_code=404)
     return FileResponse(str(path), media_type="text/html", filename="automation_report.html")
+
+
+@app.get("/bridge.py")
+def bridge_script():
+    """Serve the self-contained laptop bridge so onboarding is one line:
+       curl -s http://<server>:8000/bridge.py -o bridge.py
+       SAT_SERVER=http://<server>:8000 python3 bridge.py
+    (The bridge only exposes the device + registers — the test scripts stay here.)"""
+    p = REPO_ROOT / "bridge.py"
+    if not p.exists():
+        return PlainTextResponse("bridge.py not found on server", status_code=404)
+    return FileResponse(str(p), media_type="text/x-python", filename="bridge.py")
 
 
 @app.get("/runinfo")
@@ -578,6 +644,8 @@ def agents():
                 "devices": a.get("devices", []),
                 "status": (a.get("status", "idle") if online else "offline"),
                 "run_id": a.get("run_id"),
+                "kind": a.get("kind", "executor"),
+                "ip": a.get("ip"),
             })
     return JSONResponse({"agents": out})
 
@@ -595,9 +663,19 @@ async def agent_register(req: Request):
             "last_seen": time.time(),
             "status": "idle",     # fresh registration → idle
             "run_id": None,
+            # Phase-2 "bridge" agents: the server RUNS the scripts against this
+            # laptop's device (rather than the laptop running them). These fields
+            # tell the server how to reach the device + Appium.
+            "kind": body.get("kind", "executor"),
+            "ip": body.get("ip"),
+            "adb_port": body.get("adb_port"),
+            "appium_url": body.get("appium_url"),
         }
         AGENT_JOBS.setdefault(aid, [])
-    logging.info(f"🔌 agent registered: {aid} ({body.get('name')}) devices={body.get('devices')}")
+    logging.info(
+        f"🔌 agent registered: {aid} ({body.get('name')}) kind={body.get('kind','executor')} "
+        f"ip={body.get('ip')} devices={body.get('devices')}"
+    )
     return JSONResponse({"ok": True})
 
 

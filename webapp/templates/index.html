@@ -438,7 +438,9 @@
         btn.className = 'mini-btn run';
         btn.textContent = '▶ Run here';
         btn.disabled = (a.status !== 'idle') || !projectRunnable();
-        btn.onclick = () => dispatchToAgent(a.agent_id);
+        btn.onclick = () => (a.kind === 'bridge'
+          ? runOnBridge(a.agent_id, a.name)
+          : dispatchToAgent(a.agent_id));
         row.appendChild(btn);
         box.appendChild(row);
       });
@@ -469,6 +471,31 @@
       isAgentRun = true;
       startedAt = Math.floor(Date.now() / 1000);
       statusLabel.textContent = '● Running (remote) — ' + j.label;
+      loadHistory();
+    }
+
+    // Phase-2 bridge: the SERVER runs the scripts against the bridge's device.
+    // Tracked exactly like a local run (STATE-backed), so isAgentRun stays false.
+    async function runOnBridge(agentId, name) {
+      const data = new FormData(form);
+      data.set('agent', agentId);
+      if (!data.get('slack')) data.set('slack', 'off');
+      if (!data.get('report')) data.set('report', 'off');
+      returnToLive();
+      logEl.textContent = '';
+      logOffset = 0; currentRun = null; isAgentRun = false; startedAt = null;
+      statusLabel.textContent = '● Starting on ' + name + '…';
+      let j;
+      try {
+        j = await (await fetch('/run', { method: 'POST', body: data })).json();
+      } catch (e) {
+        statusLabel.textContent = '⚠ could not reach server'; return;
+      }
+      if (!j.ok) { statusLabel.textContent = '⚠ ' + j.error; return; }
+      logOffset = 0;
+      currentRun = j.run_id;
+      startedAt = Math.floor(Date.now() / 1000);
+      statusLabel.textContent = '● Running — ' + j.label;
       loadHistory();
     }
 
