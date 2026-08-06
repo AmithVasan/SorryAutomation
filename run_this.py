@@ -574,6 +574,24 @@ def get_installed_version(package_name, device_id):
         return None, None
 
 
+def human_device_name(device_id):
+    """Readable device name from adb props (e.g. 'Samsung SM-G991B'); falls back
+    to the serial if adb can't answer. Reports then show a real name instead of
+    a bare serial like 'sm-53636'."""
+    def prop(p):
+        try:
+            return subprocess.run(
+                [ADB_PATH, "-s", device_id, "shell", "getprop", p],
+                capture_output=True, text=True, timeout=10
+            ).stdout.strip()
+        except Exception:
+            return ""
+    brand = prop("ro.product.brand") or prop("ro.product.manufacturer")
+    model = prop("ro.product.model")
+    name = " ".join(x for x in [brand.title() if brand else "", model] if x).strip()
+    return name or device_id
+
+
 def uninstall_app(package_name, device_id):
     logging.info(f"🗑️ Uninstalling '{package_name}' from {device_id}...")
     r = subprocess.run(
@@ -1060,7 +1078,7 @@ def _device_worker(
         is_emulator  = device_id.startswith("emulator-")
         device_model = driver.capabilities.get("deviceModel",    "Unknown")
         android_ver  = driver.capabilities.get("platformVersion","Unknown")
-        device_name  = driver.capabilities.get("deviceName",     "Unknown")
+        device_name  = human_device_name(device_id)
         window_size  = driver.get_window_size()
         resolution   = f"{window_size['width']} x {window_size['height']}"
         device_type  = (
@@ -1176,11 +1194,8 @@ def _run_single_device(run_type="complete", individual_tests=None):
         "Unknown"
     )
     
-    device_name = driver.capabilities.get(
-        "deviceName",
-        "Unknown"
-    )
-    
+    device_name = human_device_name(device_id)
+
     window_size = driver.get_window_size()
     
     resolution = (
@@ -1314,7 +1329,7 @@ def _run_parallel(run_types: list, label: str = "Parallel"):
     total_time    = int(time.time() - suite_start)
     duration_text = f"{total_time // 60}m {total_time % 60}s"
     apk_name      = apk_name_holder[0] or "unknown.apk"
-    device_ids    = ", ".join(devices)
+    device_ids    = ", ".join(human_device_name(d) for d in devices)
 
     logging.info(f"🏁 ALL DEVICES FINISHED — combined duration {duration_text}")
 
