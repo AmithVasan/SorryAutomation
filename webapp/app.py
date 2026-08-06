@@ -332,17 +332,12 @@ def _list_builds():
 
 
 def _device_label(adb, serial):
-    """Human name for a device serial via adb props; falls back to the serial."""
-    def prop(p):
-        try:
-            return subprocess.run([adb, "-s", serial, "shell", "getprop", p],
-                                  capture_output=True, text=True, timeout=6).stdout.strip()
-        except Exception:
-            return ""
-    brand = prop("ro.product.brand") or prop("ro.product.manufacturer")
-    model = prop("ro.product.model")
-    name = " ".join(x for x in [brand.title() if brand else "", model] if x).strip()
-    return name or serial
+    """Human marketing name for a device serial (see utils.device_names)."""
+    try:
+        from utils.device_names import pretty_name
+        return pretty_name(serial, adb)
+    except Exception:
+        return serial
 
 
 def _list_devices_named():
@@ -570,6 +565,9 @@ def run(
 
         env = os.environ.copy()
         env["PYTHONUNBUFFERED"] = "1"   # stream logs promptly
+        # The GUI owns build fetching (the "Check for new builds" button), so a
+        # run never auto-downloads / force-overrides the chosen build.
+        env["SAT_SKIP_BUILD_FETCH"] = "1"
         if remote:
             # Point adb + Appium at the bridge laptop's device
             # (utils/env_config.apply_remote_adb reads these at run_this import).

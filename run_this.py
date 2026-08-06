@@ -584,21 +584,13 @@ def get_installed_version(package_name, device_id):
 
 
 def human_device_name(device_id):
-    """Readable device name from adb props (e.g. 'Samsung SM-G991B'); falls back
-    to the serial if adb can't answer. Reports then show a real name instead of
-    a bare serial like 'sm-53636'."""
-    def prop(p):
-        try:
-            return subprocess.run(
-                [ADB_PATH, "-s", device_id, "shell", "getprop", p],
-                capture_output=True, text=True, timeout=10
-            ).stdout.strip()
-        except Exception:
-            return ""
-    brand = prop("ro.product.brand") or prop("ro.product.manufacturer")
-    model = prop("ro.product.model")
-    name = " ".join(x for x in [brand.title() if brand else "", model] if x).strip()
-    return name or device_id
+    """Readable marketing name for a device serial, e.g. 'Samsung Galaxy S23 FE'
+    (see utils.device_names). Falls back to the serial."""
+    try:
+        from utils.device_names import pretty_name
+        return pretty_name(device_id, ADB_PATH)
+    except Exception:
+        return device_id
 
 
 def uninstall_app(package_name, device_id):
@@ -1734,9 +1726,11 @@ if __name__ == "__main__":
     # Check Slack for a new build after the user has made their selection.
     # Downloads the APK to APK_FOLDER if a matching file is found;
     # get_latest_apk() will pick it up automatically (newest by ctime).
-    # Skipped when a specific build was chosen in the GUI (SAT_APK) — the user's
-    # selection wins, and the GUI's "Check for new builds" button handles fetches.
-    if not os.environ.get("SAT_APK"):
+    # Skipped when a specific build was chosen (SAT_APK) or when the caller owns
+    # build fetching itself (SAT_SKIP_BUILD_FETCH=1 — the GUI, whose "Check for
+    # new builds" button is the only way a build downloads). CLI/interactive runs
+    # with neither set keep the original auto-fetch-latest behaviour.
+    if not os.environ.get("SAT_APK") and os.environ.get("SAT_SKIP_BUILD_FETCH") != "1":
         fetch_latest_build_from_slack()
 
     _exit_code = 0
