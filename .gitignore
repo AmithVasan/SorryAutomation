@@ -19,3 +19,5 @@ automation_report_assets/
 
 # Web GUI per-run console logs
 webapp/runs/
+# per-device APK install state (runtime, machine-local)
+apk_installed.json

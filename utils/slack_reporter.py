@@ -1,4 +1,5 @@
 import os
+import re
 import requests
 import subprocess
 
@@ -105,8 +106,9 @@ def generate_html_report(
         """
 
         steps_html = ""
+        safe_name = re.sub(r'[^A-Za-z0-9]+', '_', result['name']).strip('_') or 'test'
 
-        for step in result.get("steps", []):
+        for _si, step in enumerate(result.get("steps", []), 1):
 
             if isinstance(step, dict):
 
@@ -122,9 +124,10 @@ def generate_html_report(
                     "INFO": "#38bdf8"
                 }.get(step_status, "#38bdf8")
 
+                shot_name = f"{safe_name}_{_si:03d}"
                 shot_html = (
-                    f'<img class="step-shot" src="{shot}" loading="lazy" '
-                    f'alt="step screenshot" '
+                    f'<img class="step-shot" data-name="{shot_name}" src="{shot}" '
+                    f'loading="lazy" alt="step screenshot" '
                     f'onclick="this.classList.toggle(\'zoom\')">'
                     if shot else ""
                 )

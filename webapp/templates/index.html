@@ -86,6 +86,7 @@
         <button type="submit" id="run-btn" class="btn btn-run">▶ Run</button>
         <button type="button" id="stop-btn" class="btn btn-stop" disabled>■ Stop</button>
         <a href="/report" target="_blank" id="report-link" class="btn btn-ghost disabled">📄 Report</a>
+        <a href="/screenshots.zip" id="shots-link" class="btn btn-ghost disabled" title="Download every step screenshot from the latest report as a zip">📸 Screenshots</a>
       </div>
     </form>
 
@@ -233,6 +234,7 @@
     const runBtn = document.getElementById('run-btn');
     const stopBtn = document.getElementById('stop-btn');
     const reportLink = document.getElementById('report-link');
+    const shotsLink = document.getElementById('shots-link');
     const logEl = document.getElementById('log');
     const devicePill = document.getElementById('device-pill');
     const deviceText = document.getElementById('device-text');
@@ -393,6 +395,7 @@
         runBtn.disabled = busy || !projectRunnable();
         stopBtn.disabled = !busy;              // Stop is for the LOCAL run only
         reportLink.classList.toggle('disabled', !s.report_available);
+        shotsLink.classList.toggle('disabled', !s.report_available);
 
         // Local-run tracking — only when the shown run is the local one.
         if (!isAgentRun) {

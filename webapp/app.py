@@ -26,10 +26,13 @@ import signal
 import shutil
 import threading
 import subprocess
+import io
+import base64
+import zipfile
 from pathlib import Path
 
 from fastapi import FastAPI, Request, Form
-from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -600,6 +603,44 @@ def report():
     if not path.exists():
         return PlainTextResponse("No report available yet.", status_code=404)
     return FileResponse(str(path), media_type="text/html", filename="automation_report.html")
+
+
+@app.get("/screenshots.zip")
+def screenshots_zip():
+    """Bundle every per-step screenshot embedded in the latest HTML report into a
+    zip. Screenshots live inline in the report (as data URIs), so this extracts
+    them on demand — no separate on-disk copies to keep in sync."""
+    path = REPO_ROOT / "automation_report.html"
+    if not path.exists():
+        return PlainTextResponse("No report yet — run with the 📸 Screenshots toggle on.",
+                                 status_code=404)
+    html = path.read_text(encoding="utf-8", errors="ignore")
+    shots = re.findall(
+        r'<img class="step-shot" data-name="([^"]+)" src="data:image/([^;]+);base64,([^"]+)"',
+        html,
+    )
+    if not shots:
+        return PlainTextResponse(
+            "The latest report has no screenshots. Re-run with the 📸 Screenshots toggle on.",
+            status_code=404,
+        )
+    buf = io.BytesIO()
+    seen = {}
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for name, ext, b64 in shots:
+            ext = "jpg" if ext.lower() in ("jpeg", "jpg") else ext.lower()
+            seen[name] = seen.get(name, 0) + 1
+            fn = f"{name}.{ext}" if seen[name] == 1 else f"{name}_{seen[name]}.{ext}"
+            try:
+                z.writestr(fn, base64.b64decode(b64))
+            except Exception:
+                pass
+    buf.seek(0)
+    return Response(
+        content=buf.getvalue(),
+        media_type="application/zip",
+        headers={"Content-Disposition": 'attachment; filename="screenshots.zip"'},
+    )
 
 
 @app.get("/bridge.py")

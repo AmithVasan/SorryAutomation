@@ -9,6 +9,7 @@ import os
 import glob
 import importlib
 import traceback
+import json
 import hashlib
 import threading
 from utils.report_manager import send_reports
@@ -497,14 +498,25 @@ def get_apk_checksum(apk_path):
     return sha256.hexdigest()
 
 
-def get_saved_checksum():
-    if os.path.exists(CHECKSUM_FILE):
-        return open(CHECKSUM_FILE).read().strip()
-    return None
+INSTALL_RECORD_FILE = "apk_installed.json"
 
 
-def save_checksum(checksum):
-    open(CHECKSUM_FILE, "w").write(checksum)
+def _load_install_records():
+    """Per-device record of the APK checksum WE installed: {device_id: sha256}."""
+    try:
+        with open(INSTALL_RECORD_FILE) as f:
+            data = json.load(f)
+            return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _save_install_records(records):
+    try:
+        with open(INSTALL_RECORD_FILE, "w") as f:
+            json.dump(records, f, indent=2)
+    except Exception as e:
+        logging.warning(f"⚠️ could not save install record: {e}")
 
 
 def is_app_installed(package_name, device_id):
@@ -516,24 +528,79 @@ def is_app_installed(package_name, device_id):
     return package_name in result.stdout
 
 
+def get_installed_version(package_name, device_id):
+    """(versionName, versionCode) of the installed package, or (None, None)."""
+    try:
+        r = subprocess.run(
+            [ADB_PATH, "-s", device_id, "shell", "dumpsys", "package", package_name],
+            capture_output=True, text=True, timeout=20
+        )
+        vn = vc = None
+        for line in r.stdout.splitlines():
+            s = line.strip()
+            if vn is None and s.startswith("versionName="):
+                vn = s.split("=", 1)[1].strip()
+            if vc is None and "versionCode=" in s:
+                try:
+                    vc = s.split("versionCode=", 1)[1].split()[0]
+                except Exception:
+                    pass
+        return vn, vc
+    except Exception:
+        return None, None
+
+
+def uninstall_app(package_name, device_id):
+    logging.info(f"🗑️ Uninstalling '{package_name}' from {device_id}...")
+    r = subprocess.run(
+        [ADB_PATH, "-s", device_id, "uninstall", package_name],
+        capture_output=True, text=True, timeout=120
+    )
+    out = (r.stdout + r.stderr).strip()
+    logging.info(f"   adb uninstall → {out or 'done'}")
+
+
 def install_apk(device_id):
+    """Guarantee THIS device has our exact AltTester APK.
+
+    The install decision is PER-DEVICE (keyed by serial). The old logic compared
+    a single global checksum and only checked that the *package* existed — so a
+    fresh device that already had the PROD build (same package name) looked
+    "already installed", nothing was installed, and the prod (non-AltTester) app
+    launched. Now, if the build on this device isn't the exact APK we intend, we
+    uninstall whatever's there and install the correct one. Works across
+    different devices / laptops, including over the bridge.
+    """
     apk_path = get_latest_apk()
     logging.info(f"Using APK: {apk_path}")
-
     current_checksum = get_apk_checksum(apk_path)
-    saved_checksum = get_saved_checksum()
 
-    if current_checksum == saved_checksum and is_app_installed(PACKAGE_NAME, device_id):
-        logging.info("📦 APK unchanged → skipping install")
+    records = _load_install_records()
+    installed = is_app_installed(PACKAGE_NAME, device_id)
+    ours_here = installed and records.get(device_id) == current_checksum
+
+    if ours_here:
+        logging.info(f"📦 Correct AltTester APK already on {device_id} → skipping install")
         return
 
-    logging.info("📦 Installing APK (may take a moment over WiFi)...")
+    if installed:
+        vn, vc = get_installed_version(PACKAGE_NAME, device_id)
+        logging.info(
+            f"♻️ A different build is on {device_id} (version {vn}, code {vc}) — "
+            f"not our AltTester APK → uninstalling it first"
+        )
+        uninstall_app(PACKAGE_NAME, device_id)
+        records.pop(device_id, None)
+    else:
+        logging.info(f"📦 App not present on {device_id} → installing AltTester APK")
+
+    logging.info("📦 Installing APK (may take a moment over WiFi / bridge)...")
 
     result = subprocess.run(
         [ADB_PATH, "-s", device_id, "install", "-r", apk_path],
         capture_output=True,
         text=True,
-        timeout=300     # 5 min ceiling — large APKs over WiFi can be slow
+        timeout=600     # large APKs over WiFi / the bridge can be slow
     )
 
     output = (result.stdout + result.stderr).strip()
@@ -551,10 +618,11 @@ def install_apk(device_id):
     if failed:
         raise RuntimeError(f"❌ APK install failed (rc={result.returncode}): {output}")
 
-    # Only save checksum AFTER confirmed success so failed installs
-    # don't permanently block future install attempts
-    save_checksum(current_checksum)
-    logging.info("✅ APK installed successfully")
+    # Record per-device AFTER confirmed success so a failed install never
+    # makes us wrongly skip next time.
+    records[device_id] = current_checksum
+    _save_install_records(records)
+    logging.info(f"✅ AltTester APK installed on {device_id}")
 
 
 # -------------------------------
