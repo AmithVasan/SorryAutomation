@@ -160,35 +160,63 @@ def _get(path, params):
         return {}
 
 
+def _appium_up():
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{APPIUM_PORT}/status", timeout=2) as r:
+            return r.status == 200
+    except Exception:
+        return False
+
+
 def register():
     ip = local_ip()
     devs = devices()
+    appium_ok = _appium_up()
+    # Advertise the Appium URL ONLY when it's actually reachable — otherwise the
+    # server would route a run to a dead Appium and fail 30s later. None = "not up".
     ok = _post("/agent/register", {
         "agent_id": AGENT_ID, "name": NAME, "devices": devs, "kind": "bridge",
-        "ip": ip, "adb_port": ADB_RELAY_PORT, "appium_url": f"http://{ip}:{APPIUM_PORT}",
+        "ip": ip, "adb_port": ADB_RELAY_PORT,
+        "appium_url": (f"http://{ip}:{APPIUM_PORT}" if appium_ok else None),
     })
     log(f"{'registered' if ok else 'register FAILED (server reachable?)'}: "
-        f"{NAME}  ip={ip}  devices={devs or '(none — plug in your device)'}")
+        f"{NAME}  ip={ip}  devices={devs or '(none — plug in your device)'}  "
+        f"appium={'up' if appium_ok else 'DOWN'}")
     return devs
+
+
+def _ensure_uia2_driver(ap):
+    """UiAutomator2 driver is required to drive the device; install once if absent."""
+    try:
+        r = subprocess.run([ap, "driver", "list", "--installed"],
+                           capture_output=True, text=True, timeout=60)
+        if "uiautomator2" in (r.stdout + r.stderr):
+            return
+        log("installing Appium uiautomator2 driver (one-time)…")
+        subprocess.run([ap, "driver", "install", "uiautomator2"], timeout=600)
+    except Exception as e:
+        log(f"uiautomator2 driver check/install skipped: {e}")
 
 
 def start_appium():
     ap = _detect_appium()
     if not ap:
-        log("⚠️ appium not found — install with:  npm i -g appium  &&  appium driver install uiautomator2")
-        log("   continuing WITHOUT Appium (AltTester tests will run; IAP tests won't)")
+        log("⚠️ appium not found — re-run the one-command setup (it installs Appium), or:")
+        log("     npm i -g appium  &&  appium driver install uiautomator2")
+        log("   continuing WITHOUT Appium — the server will refuse runs until it is up.")
         return None
+    if _appium_up():
+        log("✅ Appium already running")
+        return None
+    _ensure_uia2_driver(ap)
     log(f"starting Appium: {ap} --address 0.0.0.0 --port {APPIUM_PORT}")
     p = subprocess.Popen([ap, "--address", "0.0.0.0", "--port", str(APPIUM_PORT)],
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     for _ in range(30):
-        try:
-            with urllib.request.urlopen(f"http://127.0.0.1:{APPIUM_PORT}/status", timeout=2) as r:
-                if r.status == 200:
-                    log("✅ Appium up")
-                    return p
-        except Exception:
-            time.sleep(1)
+        if _appium_up():
+            log("✅ Appium up")
+            return p
+        time.sleep(1)
     log("⚠️ Appium not healthy within 30s — continuing (check its output)")
     return p
 
@@ -213,17 +241,19 @@ def main():
         "(Leave this running; Ctrl+C to stop.)")
 
     last = devs
+    last_appium = _appium_up()
     try:
         while True:
             time.sleep(8)
             d = _get("/agent/poll", {"agent_id": AGENT_ID})
             if not d.get("known", True):
                 register()                     # server restarted → re-register
+                last, last_appium = devices(), _appium_up()
             else:
-                cur = devices()
-                if cur != last:                # hot-plug / unplug → refresh
+                cur, cur_appium = devices(), _appium_up()
+                if cur != last or cur_appium != last_appium:   # hot-plug / Appium came up → refresh
                     register()
-                    last = cur
+                    last, last_appium = cur, cur_appium
     except KeyboardInterrupt:
         log("stopping")
 

@@ -469,6 +469,8 @@ def run(
                       "serial": devs[0] if devs else None}
         if not remote["ip"] or not remote["serial"]:
             return JSONResponse({"ok": False, "error": "Bridge has no device ready (plug in + enable USB debugging)."}, status_code=400)
+        if not remote.get("appium_url"):
+            return JSONResponse({"ok": False, "error": f"Appium isn't running on {remote['name']} yet — finish the one-command setup on that laptop (it installs + starts Appium), then click Run here again."}, status_code=400)
 
     with _lock:
         if STATE["running"]:
@@ -638,6 +640,27 @@ if ! command -v adb >/dev/null 2>&1; then
     echo "     Linux:  sudo apt-get install -y android-tools-adb"
     exit 1
   fi
+fi
+
+# Appium — required for OS-level actions + IAP. UiAutomator2 must run next to the
+# device, so it lives on THIS laptop. Installed once; skipped if already present.
+if ! command -v appium >/dev/null 2>&1; then
+  echo ".. appium not found."
+  if ! command -v node >/dev/null 2>&1; then
+    if command -v brew >/dev/null 2>&1; then
+      echo ".. installing Node.js via Homebrew (one-time)..."
+      brew install node
+    else
+      echo "X  Node.js not found. Install it (https://nodejs.org) or Homebrew, then re-run."
+      exit 1
+    fi
+  fi
+  echo ".. installing Appium (npm i -g appium) — one-time, ~1-2 min..."
+  npm i -g appium
+fi
+if ! appium driver list --installed 2>/dev/null | grep -q uiautomator2; then
+  echo ".. installing Appium uiautomator2 driver (one-time)..."
+  appium driver install uiautomator2 || true
 fi
 
 BRIDGE="$(mktemp -d)/bridge.py"
