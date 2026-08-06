@@ -540,21 +540,44 @@
       }
       box.innerHTML = '';
       list.forEach(a => {
-        const dev = (a.devices && a.devices.length) ? a.devices.join(', ') : 'no device';
+        const dl = (a.device_list && a.device_list.length)
+          ? a.device_list
+          : (a.devices || []).map(s => ({ serial: s, name: s }));
         const row = document.createElement('div');
         row.className = 'agent-row';
         row.innerHTML =
           `<span class="agent-dot ${a.status}"></span>` +
-          `<span class="agent-name">${a.name}</span>` +
-          `<span class="agent-dev">${dev}</span>` +
-          `<span class="agent-st">${a.status}</span>`;
+          `<span class="agent-name">${a.name}</span>`;
+
+        // Device: a friendly label for one, or a picker when several are attached
+        // (so the user chooses instead of defaulting to first-connected).
+        let chosenDevice = () => (dl[0] ? dl[0].serial : '');
+        if (dl.length > 1) {
+          const sel = document.createElement('select');
+          sel.className = 'history agent-dev-select';
+          sel.title = 'Choose which of this laptop’s devices to run on';
+          sel.innerHTML = dl.map(d => `<option value="${d.serial}">${d.name}</option>`).join('');
+          row.appendChild(sel);
+          chosenDevice = () => sel.value;
+        } else {
+          const span = document.createElement('span');
+          span.className = 'agent-dev';
+          span.textContent = dl.length ? dl[0].name : 'no device';
+          row.appendChild(span);
+        }
+
+        const st = document.createElement('span');
+        st.className = 'agent-st';
+        st.textContent = a.status;
+        row.appendChild(st);
+
         const btn = document.createElement('button');
         btn.type = 'button';
         btn.className = 'mini-btn run';
         btn.textContent = '▶ Run here';
-        btn.disabled = (a.status !== 'idle') || !projectRunnable();
+        btn.disabled = (a.status !== 'idle') || !projectRunnable() || dl.length === 0;
         btn.onclick = () => (a.kind === 'bridge'
-          ? runOnBridge(a.agent_id, a.name)
+          ? runOnBridge(a.agent_id, a.name, chosenDevice())
           : dispatchToAgent(a.agent_id));
         row.appendChild(btn);
         box.appendChild(row);
@@ -591,9 +614,10 @@
 
     // Phase-2 bridge: the SERVER runs the scripts against the bridge's device.
     // Tracked exactly like a local run (STATE-backed), so isAgentRun stays false.
-    async function runOnBridge(agentId, name) {
+    async function runOnBridge(agentId, name, device) {
       const data = new FormData(form);
       data.set('agent', agentId);
+      data.set('device', device || '');   // the bridge device chosen in its row
       if (!data.get('slack')) data.set('slack', 'off');
       if (!data.get('report')) data.set('report', 'off');
       returnToLive();

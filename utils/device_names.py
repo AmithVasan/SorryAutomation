@@ -88,6 +88,34 @@ def _all_props(serial, adb_path):
         return {}
 
 
+def resolve(brand="", model="", marketname=""):
+    """Marketing name from raw props (no adb) — used when the props were gathered
+    elsewhere (e.g. a bridge laptop sends them to the server). '' if nothing."""
+    brand = (brand or "").strip()
+    mn = (marketname or "").strip()
+    if mn and mn.lower() != "unknown":
+        return _brandize(brand, mn)
+    mk = _lookup_model(model or "")
+    if mk:
+        return mk
+    return _brandize(brand, (model or "").strip())
+
+
+def name_from_props(props):
+    """Resolve a friendly name from a getprop dict (any of the marketname props
+    + brand/model). '' if nothing usable."""
+    if not props:
+        return ""
+    brand = props.get("ro.product.brand") or props.get("ro.product.manufacturer") or ""
+    marketname = ""
+    for p in _MARKETNAME_PROPS:
+        v = (props.get(p) or "").strip()
+        if v and v.lower() != "unknown":
+            marketname = v
+            break
+    return resolve(brand, props.get("ro.product.model", ""), marketname)
+
+
 def pretty_name(serial, adb_path):
     """Human-readable marketing name for a device serial. Never raises."""
     if not adb_path:
@@ -95,13 +123,4 @@ def pretty_name(serial, adb_path):
     props = _all_props(serial, adb_path)
     if not props:
         return serial
-    brand = props.get("ro.product.brand") or props.get("ro.product.manufacturer") or ""
-    for p in _MARKETNAME_PROPS:
-        v = (props.get(p) or "").strip()
-        if v and v.lower() != "unknown":
-            return _brandize(brand, v)
-    model = props.get("ro.product.model", "")
-    mk = _lookup_model(model)
-    if mk:
-        return mk
-    return _brandize(brand, model) or serial
+    return name_from_props(props) or serial

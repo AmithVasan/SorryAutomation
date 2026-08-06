@@ -511,9 +511,12 @@ def run(
             if a.get("status") == "busy":
                 return JSONResponse({"ok": False, "error": "That device is busy with a run."}, status_code=409)
             devs = a.get("devices") or []
+            # Use the device the user picked (if it belongs to this bridge),
+            # else the first — no longer defaulting blindly to first-connected.
+            chosen = device if (device and device in devs) else (devs[0] if devs else None)
             remote = {"agent_id": agent, "name": a.get("name", agent), "ip": a.get("ip"),
                       "adb_port": a.get("adb_port") or 5038, "appium_url": a.get("appium_url"),
-                      "serial": devs[0] if devs else None}
+                      "serial": chosen}
         if not remote["ip"] or not remote["serial"]:
             return JSONResponse({"ok": False, "error": "Bridge has no device ready (plug in + enable USB debugging)."}, status_code=400)
         if not remote.get("appium_url"):
@@ -872,6 +875,26 @@ def runinfo(run_id: str = ""):
 # ─────────────────────────────────────────────────────────────────────────────
 # Remote agent control-plane
 # ─────────────────────────────────────────────────────────────────────────────
+def _bridge_device_list(a):
+    """[{serial, name}] for a bridge's devices, names resolved from the props the
+    bridge sent (marketing name when known, else the serial)."""
+    props = a.get("device_props") or {}
+    try:
+        from utils.device_names import name_from_props
+    except Exception:
+        name_from_props = None
+    out = []
+    for s in a.get("devices", []):
+        nm = ""
+        if name_from_props:
+            try:
+                nm = name_from_props(props.get(s) or {}) or ""
+            except Exception:
+                nm = ""
+        out.append({"serial": s, "name": nm or s})
+    return out
+
+
 @app.get("/agents")
 def agents():
     now = time.time()
@@ -883,6 +906,7 @@ def agents():
                 "agent_id": aid,
                 "name": a.get("name", aid),
                 "devices": a.get("devices", []),
+                "device_list": _bridge_device_list(a),
                 "status": (a.get("status", "idle") if online else "offline"),
                 "run_id": a.get("run_id"),
                 "kind": a.get("kind", "executor"),
@@ -911,6 +935,7 @@ async def agent_register(req: Request):
             "ip": body.get("ip"),
             "adb_port": body.get("adb_port"),
             "appium_url": body.get("appium_url"),
+            "device_props": body.get("device_props") or {},
         }
         AGENT_JOBS.setdefault(aid, [])
     logging.info(

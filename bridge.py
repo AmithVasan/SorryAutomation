@@ -96,6 +96,34 @@ def devices():
         return []
 
 
+_NAME_PROPS = ("ro.product.brand", "ro.product.manufacturer", "ro.product.model",
+               "ro.product.marketname", "ro.vendor.product.marketname",
+               "ro.product.vendor.marketname", "ro.product.odm.marketname",
+               "ro.config.marketing_name")
+
+
+def device_props(serials):
+    """Per-device name props so the server can show a friendly device name
+    (Samsung Galaxy S23 FE) instead of a serial. {serial: {prop: value}}."""
+    out = {}
+    for s in serials:
+        info = {}
+        try:
+            res = subprocess.run([ADB, "-s", s, "shell", "getprop"],
+                                 capture_output=True, text=True, timeout=8).stdout
+            props = {}
+            for line in res.splitlines():
+                line = line.strip()
+                if line.startswith("[") and "]: [" in line:
+                    k, v = line[1:].split("]: [", 1)
+                    props[k] = v.rstrip("]")
+            info = {k: props.get(k, "") for k in _NAME_PROPS if props.get(k)}
+        except Exception:
+            info = {}
+        out[s] = info
+    return out
+
+
 # ── TCP relay ────────────────────────────────────────────────────────────────
 def _pipe(a, b):
     try:
@@ -178,6 +206,7 @@ def register():
         "agent_id": AGENT_ID, "name": NAME, "devices": devs, "kind": "bridge",
         "ip": ip, "adb_port": ADB_RELAY_PORT,
         "appium_url": (f"http://{ip}:{APPIUM_PORT}" if appium_ok else None),
+        "device_props": device_props(devs),
     })
     log(f"{'registered' if ok else 'register FAILED (server reachable?)'}: "
         f"{NAME}  ip={ip}  devices={devs or '(none — plug in your device)'}  "
