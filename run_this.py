@@ -760,7 +760,7 @@ def run_all_tests(
             # ---------------------------------
             from utils.test_logger import TestStepCollector
     
-            collector = TestStepCollector()
+            collector = TestStepCollector(driver=driver)
     
             root_logger = logging.getLogger()
             root_logger.addHandler(collector)
@@ -1503,6 +1503,8 @@ def build_config_from_args():
     )
     parser.add_argument("--slack", choices=["on", "off"], help="Send Slack report")
     parser.add_argument("--report", choices=["on", "off"], help="Generate HTML report")
+    parser.add_argument("--screenshots", choices=["on", "off"],
+                        help="Capture a screenshot per step (embedded in the HTML report)")
     parser.add_argument(
         "--list-tests",
         action="store_true",
@@ -1521,6 +1523,11 @@ def build_config_from_args():
         os.environ["SAT_ENABLE_SLACK"] = "1" if args.slack == "on" else "0"
     if args.report is not None:
         os.environ["SAT_ENABLE_HTML"] = "1" if args.report == "on" else "0"
+    if args.screenshots is not None:
+        os.environ["SAT_SCREENSHOTS"] = "1" if args.screenshots == "on" else "0"
+        # Screenshots are shown inside the HTML report — ensure it's generated.
+        if args.screenshots == "on":
+            os.environ["SAT_ENABLE_HTML"] = "1"
 
     # Individual test (by index or name)
     if args.test:

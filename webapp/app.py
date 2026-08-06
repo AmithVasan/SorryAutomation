@@ -443,6 +443,7 @@ def run(
     test: str = Form(""),
     slack: str = Form("off"),          # checkbox → "on" when ticked
     report: str = Form("off"),
+    screenshots: str = Form("off"),    # capture a screenshot per step
     ref: str = Form(""),               # git branch to run (blank = current)
     agent: str = Form(""),             # bridge id → run the scripts on ITS device
 ):
@@ -508,6 +509,7 @@ def run(
             display = rt.capitalize()            # dropdown shows the run type
         cmd += ["--slack", "on" if slack == "on" else "off"]
         cmd += ["--report", "on" if report == "on" else "off"]
+        cmd += ["--screenshots", "on" if screenshots == "on" else "off"]
         if remote:
             label += f"  →  {remote['name']}"
 

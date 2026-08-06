@@ -113,6 +113,7 @@ def generate_html_report(
                 step_status = step.get("status", "INFO")
                 step_text = step.get("step", "")
                 timestamp = step.get("timestamp", "")
+                shot = step.get("screenshot", "")
 
                 step_color = {
                     "PASS": "#22c55e",
@@ -120,6 +121,13 @@ def generate_html_report(
                     "WARN": "#f59e0b",
                     "INFO": "#38bdf8"
                 }.get(step_status, "#38bdf8")
+
+                shot_html = (
+                    f'<img class="step-shot" src="{shot}" loading="lazy" '
+                    f'alt="step screenshot" '
+                    f'onclick="this.classList.toggle(\'zoom\')">'
+                    if shot else ""
+                )
 
                 steps_html += f"""
                 <div class="step-card">
@@ -137,6 +145,7 @@ def generate_html_report(
                     <div class="step-text">
                         {step_text}
                     </div>
+                    {shot_html}
                 </div>
                 """
 
@@ -411,6 +420,22 @@ summary {{
     font-size: 14px;
 
     line-height: 1.6;
+}}
+
+/* Per-step screenshot thumbnail — click to zoom (no JS needed) */
+.step-shot {{
+    display: block;
+    margin-top: 10px;
+    max-width: 200px;
+    border-radius: 10px;
+    border: 1px solid rgba(148, 163, 184, 0.25);
+    cursor: zoom-in;
+    transition: max-width 0.2s ease;
+}}
+
+.step-shot.zoom {{
+    max-width: 100%;
+    cursor: zoom-out;
 }}
 
 .footer {{
