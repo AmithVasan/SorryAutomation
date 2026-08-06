@@ -285,6 +285,16 @@ body.has-bg-image .bg-image::after {   /* readability scrim over the image */
   font-size: 0.8rem; cursor: pointer; transition: color 0.15s, border-color 0.15s, background 0.15s;
 }
 .os-tab.active { color: var(--text); border-color: var(--accent); background: rgba(109,139,255,0.12); }
+
+/* Build (APK) selector — long APK names stay inside the container (ellipsized);
+   full name is shown via the select's title tooltip on hover. */
+.build-select {
+  width: 100%;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .cmd-row { display: flex; align-items: stretch; gap: 8px; }
 .cmd-row code {
   flex: 1 1 auto; min-width: 0; overflow-x: auto; white-space: nowrap;

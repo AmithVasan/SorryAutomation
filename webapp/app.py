@@ -59,6 +59,14 @@ try:
 except Exception:
     _registry_mod = None
 
+# Build folder (where APKs live / Slack downloads land). Auto-detected, same as
+# the automation uses; falls back to a local ./apks if detection fails.
+try:
+    from utils.env_config import detect_apk_folder
+    APK_FOLDER = Path(detect_apk_folder())
+except Exception:
+    APK_FOLDER = REPO_ROOT / "apks"
+
 
 def _load_test_names():
     """(Re)read the test registry from disk so newly-added tests show up
@@ -308,6 +316,44 @@ def _adb_devices():
         return None
 
 
+def _list_builds():
+    """APKs in the build folder, newest first: [{name, size_mb, mtime}]."""
+    out = []
+    try:
+        for p in sorted(APK_FOLDER.glob("*.apk"),
+                        key=lambda x: x.stat().st_mtime, reverse=True):
+            st = p.stat()
+            out.append({"name": p.name,
+                        "size_mb": round(st.st_size / (1024 * 1024), 1),
+                        "mtime": int(st.st_mtime)})
+    except Exception:
+        pass
+    return out
+
+
+def _device_label(adb, serial):
+    """Human name for a device serial via adb props; falls back to the serial."""
+    def prop(p):
+        try:
+            return subprocess.run([adb, "-s", serial, "shell", "getprop", p],
+                                  capture_output=True, text=True, timeout=6).stdout.strip()
+        except Exception:
+            return ""
+    brand = prop("ro.product.brand") or prop("ro.product.manufacturer")
+    model = prop("ro.product.model")
+    name = " ".join(x for x in [brand.title() if brand else "", model] if x).strip()
+    return name or serial
+
+
+def _list_devices_named():
+    """Connected devices with human names: [{serial, name}]. Never raises."""
+    adb = os.environ.get("SAT_ADB") or shutil.which("adb")
+    serials = _adb_devices() or []
+    if not adb:
+        return [{"serial": s, "name": s} for s in serials]
+    return [{"serial": s, "name": _device_label(adb, s)} for s in serials]
+
+
 def _kill_proc_tree(proc):
     """Stop the run and its ENTIRE process group IMMEDIATELY via SIGKILL.
 
@@ -449,6 +495,8 @@ def run(
     screenshots: str = Form("off"),    # capture a screenshot per step
     ref: str = Form(""),               # git branch to run (blank = current)
     agent: str = Form(""),             # bridge id → run the scripts on ITS device
+    build: str = Form(""),             # APK filename to install/run (blank = latest)
+    device: str = Form(""),            # device serial to run on (local runs)
 ):
     if project not in _RUNNABLE:
         return JSONResponse(
@@ -531,6 +579,15 @@ def run(
             if remote["appium_url"]:
                 env["SAT_APPIUM_URL"] = remote["appium_url"]
 
+        # Selected build (install/run this exact APK on whatever device is used).
+        if build:
+            apk = APK_FOLDER / os.path.basename(build)
+            if apk.exists():
+                env["SAT_APK"] = str(apk)
+        # Selected device for a LOCAL run (bridge runs get their device above).
+        if device and not remote:
+            env["SAT_DEVICE_ID"] = device
+
         proc = subprocess.Popen(
             cmd,
             cwd=run_cwd,               # the selected branch's worktree (or REPO_ROOT)
@@ -595,6 +652,33 @@ def stop():
                 a["status"] = "idle"
                 a["run_id"] = None
     return JSONResponse({"ok": True})
+
+
+@app.get("/builds")
+def builds_list():
+    """Available builds (APKs) in the build folder, newest first."""
+    return JSONResponse({"builds": _list_builds()})
+
+
+@app.post("/builds/refresh")
+def builds_refresh():
+    """Fetch new builds from Slack into the build folder, then return the list.
+    Reuses run_this.py --check-builds so the Slack logic stays in one place."""
+    ok, err = True, ""
+    try:
+        r = subprocess.run([PYTHON, "-u", "run_this.py", "--check-builds"],
+                           cwd=str(REPO_ROOT), capture_output=True, text=True, timeout=300)
+        if r.returncode != 0:
+            ok, err = False, (r.stderr or r.stdout or "check failed").strip()[-300:]
+    except Exception as e:
+        ok, err = False, str(e)
+    return JSONResponse({"ok": ok, "error": err, "builds": _list_builds()})
+
+
+@app.get("/devices")
+def devices_list():
+    """Connected (server-local) devices with human-readable names."""
+    return JSONResponse({"devices": _list_devices_named()})
 
 
 @app.get("/reports")

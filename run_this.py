@@ -491,6 +491,15 @@ def get_latest_apk():
     return max(files, key=os.path.getctime)
 
 
+def get_selected_apk():
+    """The build to run: SAT_APK (the build chosen in the GUI) if it's set and
+    exists, otherwise the newest APK in the build folder."""
+    sel = os.environ.get("SAT_APK")
+    if sel and os.path.exists(sel):
+        return sel
+    return get_latest_apk()
+
+
 def get_apk_checksum(apk_path):
     sha256 = hashlib.sha256()
     with open(apk_path, "rb") as f:
@@ -635,7 +644,7 @@ def install_apk(device_id):
     uninstall whatever's there and install the correct one. Works across
     different devices / laptops, including over the bridge.
     """
-    apk_path = get_latest_apk()
+    apk_path = get_selected_apk()
     logging.info(f"Using APK: {apk_path}")
     current_checksum = get_apk_checksum(apk_path)
 
@@ -840,7 +849,7 @@ def run_all_tests(
     # -------------------------------
     # APK NAME
     # -------------------------------
-    apk_name = os.path.basename(get_latest_apk())
+    apk_name = os.path.basename(get_selected_apk())
 
     # -------------------------------
     # FILTER TESTS
@@ -1654,12 +1663,24 @@ def build_config_from_args():
         action="store_true",
         help="Print the test registry (index + name) and exit",
     )
+    parser.add_argument(
+        "--check-builds",
+        action="store_true",
+        help="Fetch new builds from Slack into the build folder and exit",
+    )
     # parse_known_args so unrelated argv (e.g. from a launcher) never crashes us
     args, _ = parser.parse_known_args()
 
     if args.list_tests:
         for i, t in enumerate(TEST_REGISTRY, start=1):
             print(f"{i}\t{t['name']}")
+        raise SystemExit(0)
+
+    if args.check_builds:
+        try:
+            fetch_latest_build_from_slack()
+        except Exception as e:
+            logging.warning(f"build check failed: {e}")
         raise SystemExit(0)
 
     # Report checkboxes → env (report_manager reads these per-run)
@@ -1713,7 +1734,10 @@ if __name__ == "__main__":
     # Check Slack for a new build after the user has made their selection.
     # Downloads the APK to APK_FOLDER if a matching file is found;
     # get_latest_apk() will pick it up automatically (newest by ctime).
-    fetch_latest_build_from_slack()
+    # Skipped when a specific build was chosen in the GUI (SAT_APK) — the user's
+    # selection wins, and the GUI's "Check for new builds" button handles fetches.
+    if not os.environ.get("SAT_APK"):
+        fetch_latest_build_from_slack()
 
     _exit_code = 0
     try:

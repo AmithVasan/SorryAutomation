@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Automation Runner</title>
-  <link rel="stylesheet" href="/static/style.css?v=7" />
+  <link rel="stylesheet" href="/static/style.css?v=8" />
 </head>
 <body>
   <div class="bg-fx"></div>
@@ -66,6 +66,26 @@
           {% for t in tests %}<option value="{{ t }}">{{ t }}</option>{% endfor %}
         </select>
       </div>
+
+      <div class="field">
+        <span class="field-head">
+          Build (APK)
+          <button type="button" id="refresh-builds" class="mini-btn refresh-btn"
+                  title="Check Slack for new builds and download them into the build folder">
+            ⟳ Check for new builds
+          </button>
+        </span>
+        <select name="build" id="build" class="build-select">
+          <option value="">Latest build</option>
+        </select>
+      </div>
+
+      <label class="field">
+        <span>Device</span>
+        <select name="device" id="device">
+          <option value="">Auto (first connected)</option>
+        </select>
+      </label>
 
       <div class="toggles">
         <label class="switch">
@@ -251,6 +271,48 @@
       reportsSelect.innerHTML = '<option value="">🗂 Past reports…</option>' +
         list.map(r => `<option value="${r.name}">${r.name}</option>`).join('');
     }
+
+    // ── Build (APK) selection ───────────────────────────────────────────────────
+    const buildSel = document.getElementById('build');
+    const deviceSel = document.getElementById('device');
+    const refreshBuildsBtn = document.getElementById('refresh-builds');
+
+    function setBuildTitle() {
+      const o = buildSel.options[buildSel.selectedIndex];
+      buildSel.title = o ? o.textContent.trim() : '';
+    }
+    async function loadBuilds() {
+      let list = [];
+      try { list = (await (await fetch('/builds')).json()).builds || []; } catch (e) { return; }
+      const cur = buildSel.value;
+      buildSel.innerHTML = '<option value="">Latest build</option>' +
+        list.map(b => `<option value="${b.name}">${b.name}  (${b.size_mb} MB)</option>`).join('');
+      if ([...buildSel.options].some(o => o.value === cur)) buildSel.value = cur;
+      setBuildTitle();
+    }
+    buildSel.addEventListener('change', setBuildTitle);
+    refreshBuildsBtn.addEventListener('click', async () => {
+      const old = refreshBuildsBtn.textContent;
+      refreshBuildsBtn.textContent = '⏳ Checking…';
+      refreshBuildsBtn.classList.add('spin');
+      let j = {};
+      try { j = await (await fetch('/builds/refresh', { method: 'POST' })).json(); } catch (e) {}
+      await loadBuilds();
+      refreshBuildsBtn.classList.remove('spin');
+      refreshBuildsBtn.textContent = (j && j.ok === false) ? '⚠ check failed' : '✓ up to date';
+      setTimeout(() => { refreshBuildsBtn.textContent = old; }, 2000);
+    });
+
+    // ── Device selection (local runs) ────────────────────────────────────────────
+    let lastDevSig = null;
+    async function loadDevices() {
+      let list = [];
+      try { list = (await (await fetch('/devices')).json()).devices || []; } catch (e) { return; }
+      const cur = deviceSel.value;
+      deviceSel.innerHTML = '<option value="">Auto (first connected)</option>' +
+        list.map(d => `<option value="${d.serial}">${d.name} — ${d.serial}</option>`).join('');
+      if ([...deviceSel.options].some(o => o.value === cur)) deviceSel.value = cur;
+    }
     const logEl = document.getElementById('log');
     const devicePill = document.getElementById('device-pill');
     const deviceText = document.getElementById('device-text');
@@ -413,6 +475,8 @@
         reportLink.classList.toggle('disabled', !s.report_available);
         shotsLink.classList.toggle('disabled', !s.report_available);
         loadReports();
+        const devSig = (s.devices_connected || []).join(',');
+        if (devSig !== lastDevSig) { lastDevSig = devSig; loadDevices(); }
 
         // Local-run tracking — only when the shown run is the local one.
         if (!isAgentRun) {
@@ -718,6 +782,8 @@
     pollStatus();
     loadHistory();
     loadBranches();
+    loadBuilds();
+    loadDevices();
   </script>
 </body>
 </html>
