@@ -560,6 +560,28 @@ def uninstall_app(package_name, device_id):
     logging.info(f"   adb uninstall → {out or 'done'}")
 
 
+def _adb_install_once(device_id, apk_path, extra_args):
+    """One `adb install` attempt. Returns (ok, combined_output).
+
+    Always passes -r -d:  -d allows a version-code DOWNGRADE, which is essential
+    here — the AltTester test build (e.g. 0.59.0/92) is usually OLDER than the
+    prod build a personal device already has (e.g. 0.61.1/94), so a plain install
+    is rejected as a downgrade (streamed installs report this with an empty
+    reason, which is exactly what we saw)."""
+    result = subprocess.run(
+        [ADB_PATH, "-s", device_id, "install", "-r", "-d", *extra_args, apk_path],
+        capture_output=True, text=True, timeout=900,
+    )
+    output = (result.stdout + result.stderr).strip()
+    ok = not (
+        result.returncode != 0
+        or "Failure" in output
+        or "Exception" in output
+        or ("error" in output.lower() and "0 errors" not in output.lower())
+    )
+    return ok, output
+
+
 def install_apk(device_id):
     """Guarantee THIS device has our exact AltTester APK.
 
@@ -596,27 +618,21 @@ def install_apk(device_id):
 
     logging.info("📦 Installing APK (may take a moment over WiFi / bridge)...")
 
-    result = subprocess.run(
-        [ADB_PATH, "-s", device_id, "install", "-r", apk_path],
-        capture_output=True,
-        text=True,
-        timeout=600     # large APKs over WiFi / the bridge can be slow
-    )
-
-    output = (result.stdout + result.stderr).strip()
+    # Attempt 1: normal (streamed) install, allowing downgrade.
+    ok, output = _adb_install_once(device_id, apk_path, [])
     if output:
         logging.info(f"   adb install → {output}")
 
-    # adb install can return exit code 0 even on failure — check output too
-    failed = (
-        result.returncode != 0
-        or "Failure" in output
-        or "Exception" in output
-        or ("error" in output.lower() and "0 errors" not in output.lower())
-    )
+    # Attempt 2: some devices / links (Android 16, flaky bridge) fail the
+    # streamed path — retry pushing the APK first (--no-streaming).
+    if not ok:
+        logging.warning("⚠️ Install failed → retrying with --no-streaming...")
+        ok, output = _adb_install_once(device_id, apk_path, ["--no-streaming"])
+        if output:
+            logging.info(f"   adb install (no-streaming) → {output}")
 
-    if failed:
-        raise RuntimeError(f"❌ APK install failed (rc={result.returncode}): {output}")
+    if not ok:
+        raise RuntimeError(f"❌ APK install failed: {output or '(no adb output)'}")
 
     # Record per-device AFTER confirmed success so a failed install never
     # makes us wrongly skip next time.
