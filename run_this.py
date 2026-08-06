@@ -10,6 +10,7 @@ import glob
 import importlib
 import traceback
 import json
+import re
 import hashlib
 import threading
 from utils.report_manager import send_reports
@@ -498,6 +499,29 @@ def get_apk_checksum(apk_path):
     return sha256.hexdigest()
 
 
+def _detect_aapt2():
+    sdk = (os.environ.get("ANDROID_HOME") or os.environ.get("ANDROID_SDK_ROOT")
+           or os.path.expanduser("~/Library/Android/sdk"))
+    cands = sorted(glob.glob(os.path.join(sdk, "build-tools", "*", "aapt2")))
+    return cands[-1] if cands else None
+
+
+def get_apk_version(apk_path):
+    """(versionName, versionCode) read from the APK via aapt2, or (None, None)."""
+    aapt2 = _detect_aapt2()
+    if not aapt2:
+        return None, None
+    try:
+        out = subprocess.run([aapt2, "dump", "badging", apk_path],
+                             capture_output=True, text=True, timeout=30).stdout
+        m_vn = re.search(r"versionName='([^']*)'", out)
+        m_vc = re.search(r"versionCode='([^']*)'", out)
+        return (m_vn.group(1) if m_vn else None,
+                m_vc.group(1) if m_vc else None)
+    except Exception:
+        return None, None
+
+
 INSTALL_RECORD_FILE = "apk_installed.json"
 
 
@@ -599,7 +623,28 @@ def install_apk(device_id):
 
     records = _load_install_records()
     installed = is_app_installed(PACKAGE_NAME, device_id)
-    ours_here = installed and records.get(device_id) == current_checksum
+
+    ours_here = False
+    if installed:
+        if records.get(device_id) == current_checksum:
+            ours_here = True
+        else:
+            # No/old record for THIS device (e.g. first run under per-device
+            # records, or the device was set up by another machine). Accept the
+            # existing app if its version matches the APK we intend — this avoids
+            # a needless uninstall + clean reinstall that wipes a working build
+            # (which previously broke AltTester registration).
+            want_vn, want_vc = get_apk_version(apk_path)
+            have_vn, have_vc = get_installed_version(PACKAGE_NAME, device_id)
+            if want_vc and have_vc and want_vc == have_vc and \
+               (not want_vn or want_vn == have_vn):
+                logging.info(
+                    f"📦 {device_id} already has our version ({have_vn}/{have_vc}) "
+                    f"→ trusting it (recording, no reinstall)"
+                )
+                ours_here = True
+                records[device_id] = current_checksum
+                _save_install_records(records)
 
     if ours_here:
         logging.info(f"📦 Correct AltTester APK already on {device_id} → skipping install")
