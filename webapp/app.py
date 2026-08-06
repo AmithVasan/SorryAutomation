@@ -597,8 +597,26 @@ def stop():
     return JSONResponse({"ok": True})
 
 
+@app.get("/reports")
+def reports_list():
+    """Past reports (dynamic-named, non-overwriting), newest first."""
+    d = REPO_ROOT / "reports"
+    out = []
+    if d.exists():
+        for p in sorted(d.glob("*.html"), key=lambda x: x.stat().st_mtime, reverse=True):
+            out.append({"name": p.name, "mtime": int(p.stat().st_mtime)})
+    return JSONResponse({"reports": out})
+
+
 @app.get("/report")
-def report():
+def report(name: str = ""):
+    if name:
+        # Serve a specific past report by filename (no path traversal).
+        safe = os.path.basename(name)
+        p = REPO_ROOT / "reports" / safe
+        if p.suffix == ".html" and p.exists():
+            return FileResponse(str(p), media_type="text/html", filename=safe)
+        return PlainTextResponse("Report not found.", status_code=404)
     path = REPO_ROOT / "automation_report.html"
     if not path.exists():
         return PlainTextResponse("No report available yet.", status_code=404)

@@ -21,3 +21,6 @@ automation_report_assets/
 webapp/runs/
 # per-device APK install state (runtime, machine-local)
 apk_installed.json
+
+# dynamic-named per-run HTML reports (generated)
+reports/

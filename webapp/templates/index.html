@@ -87,6 +87,9 @@
         <button type="button" id="stop-btn" class="btn btn-stop" disabled>■ Stop</button>
         <a href="/report" target="_blank" id="report-link" class="btn btn-ghost disabled">📄 Report</a>
         <a href="/screenshots.zip" id="shots-link" class="btn btn-ghost disabled" title="Download every step screenshot from the latest report as a zip">📸 Screenshots</a>
+        <select id="reports-select" class="history" title="Open a past report (named run-type + date + time)">
+          <option value="">🗂 Past reports…</option>
+        </select>
       </div>
     </form>
 
@@ -235,6 +238,19 @@
     const stopBtn = document.getElementById('stop-btn');
     const reportLink = document.getElementById('report-link');
     const shotsLink = document.getElementById('shots-link');
+    const reportsSelect = document.getElementById('reports-select');
+    reportsSelect.addEventListener('change', e => {
+      if (e.target.value) {
+        window.open('/report?name=' + encodeURIComponent(e.target.value), '_blank');
+        e.target.value = '';
+      }
+    });
+    async function loadReports() {
+      let list = [];
+      try { list = (await (await fetch('/reports')).json()).reports || []; } catch (e) { return; }
+      reportsSelect.innerHTML = '<option value="">🗂 Past reports…</option>' +
+        list.map(r => `<option value="${r.name}">${r.name}</option>`).join('');
+    }
     const logEl = document.getElementById('log');
     const devicePill = document.getElementById('device-pill');
     const deviceText = document.getElementById('device-text');
@@ -396,6 +412,7 @@
         stopBtn.disabled = !busy;              // Stop is for the LOCAL run only
         reportLink.classList.toggle('disabled', !s.report_available);
         shotsLink.classList.toggle('disabled', !s.report_available);
+        loadReports();
 
         // Local-run tracking — only when the shown run is the local one.
         if (!isAgentRun) {

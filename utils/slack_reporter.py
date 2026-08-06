@@ -633,17 +633,23 @@ Generated at
 </html>
 """
 
-    report_path = os.path.join(
-        PROJECT_ROOT,
-        "automation_report.html"
-    )
+    # Dynamic, non-overwriting name:  <run_type>_<DD-MM-YYYY>_<HHMM>.html
+    # (e.g. regression_06-08-2026_1344.html). Also refresh automation_report.html
+    # as the "latest" pointer so existing links keep working.
+    reports_dir = os.path.join(PROJECT_ROOT, "reports")
+    os.makedirs(reports_dir, exist_ok=True)
+    safe_rt = re.sub(r'[^A-Za-z0-9]+', '_', str(run_type or 'run')).strip('_') or 'run'
+    stamp = datetime.now().strftime("%d-%m-%Y_%H%M")
+    named_path = os.path.join(reports_dir, f"{safe_rt}_{stamp}.html")
+    latest_path = os.path.join(PROJECT_ROOT, "automation_report.html")
 
-    with open(report_path, "w", encoding="utf-8") as f:
-        f.write(html)
+    for p in (named_path, latest_path):
+        with open(p, "w", encoding="utf-8") as f:
+            f.write(html)
 
-    print(f"✅ HTML report generated: {report_path}")
+    print(f"✅ HTML report generated: {named_path}")
 
-    return report_path
+    return named_path
 
 
 # ---------------------------------------------------
