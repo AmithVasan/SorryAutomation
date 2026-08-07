@@ -115,18 +115,38 @@ app.mount("/static", StaticFiles(directory=str(WEBAPP_DIR / "static")), name="st
 # Single-run state  (one device, one run at a time)
 # ─────────────────────────────────────────────────────────────────────────────
 _lock = threading.Lock()
-STATE = {
-    "running": False,
-    "run_id": None,
-    "label": None,
-    "started": None,      # epoch seconds
-    "ended": None,
-    "returncode": None,
-    "log_path": None,
-    "proc": None,
-    "stopped": False,     # set when the user clicks Stop
-    "agent_id": None,     # set when this server-run drives a remote bridge device
-}
+
+# Multi-run registry. Up to PARALLEL_SLOTS runs execute at once, each on its own
+# device with a distinct AltTester app-name (slot → "sorry<slot>") + Appium
+# systemPort, so they don't collide on the shared AltTester Desktop.
+#   run_id -> {proc, log_path, log_file, label, display, project, started, ended,
+#              returncode, stopped, agent_id, device, slot, app_name}
+RUNS = {}
+PARALLEL_SLOTS = int(os.environ.get("SAT_PARALLEL_SLOTS", "2"))
+
+
+def _run_alive(r):
+    p = r.get("proc")
+    return p is not None and p.poll() is None
+
+
+def _active_runs():
+    return {rid: r for rid, r in RUNS.items() if _run_alive(r)}
+
+
+def _free_slot():
+    used = {r["slot"] for r in _active_runs().values() if r.get("slot")}
+    for s in range(1, PARALLEL_SLOTS + 1):
+        if s not in used:
+            return s
+    return None
+
+
+def _device_active_run(device):
+    for rid, r in RUNS.items():
+        if _run_alive(r) and r.get("device") == device:
+            return rid
+    return None
 
 _SAFE_ID = re.compile(r"^[0-9_]+$")   # run_id is a timestamp → digits + "_" only
 
@@ -370,31 +390,34 @@ def _kill_proc_tree(proc):
         pass
 
 
-def _watch(proc, run_id, log_file):
-    """Wait for the run to finish, flip state back to Free, and record the result."""
+def _watch(run_id):
+    """Wait for a run to finish, record the result, free its slot + bridge."""
+    r = RUNS.get(run_id)
+    if not r:
+        return
+    proc = r["proc"]
     rc = proc.wait()
-    log_file.flush()
-    log_file.close()
+    try:
+        r["log_file"].flush()
+        r["log_file"].close()
+    except Exception:
+        pass
     with _lock:
-        was_stopped = STATE["stopped"] and STATE["run_id"] == run_id
+        was_stopped = r.get("stopped")
+        r["returncode"] = rc
+        r["ended"] = time.time()
+        freed_agent = r.get("agent_id")
     status = "stopped" if was_stopped else ("passed" if rc == 0 else "failed")
     _write_meta(run_id, status=status, ended=time.time(), returncode=rc)
-    freed_agent = None
-    with _lock:
-        if STATE["run_id"] == run_id:
-            STATE["running"] = False
-            STATE["returncode"] = rc
-            STATE["ended"] = time.time()
-            STATE["proc"] = None
-            freed_agent = STATE.get("agent_id")
-            STATE["agent_id"] = None
-    # If this was a remote-device run, mark that bridge free again.
     if freed_agent:
         with _agents_lock:
             a = AGENTS.get(freed_agent)
             if a:
                 a["status"] = "idle"
                 a["run_id"] = None
+    # Drop from the active registry (history/status live in the meta file on disk).
+    with _lock:
+        RUNS.pop(run_id, None)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -416,20 +439,21 @@ def index(request: Request):
 @app.get("/status")
 def status():
     with _lock:
-        proc = STATE["proc"]
-        # Self-heal: if STATE says running but the process is gone or has
-        # already exited, reconcile so the UI can never stay stuck on Busy.
-        if STATE["running"] and (proc is None or proc.poll() is not None):
-            STATE["running"] = False
-            STATE["proc"] = None
-            if STATE["ended"] is None:
-                STATE["ended"] = time.time()
-        s = {k: STATE[k] for k in
-             ("running", "run_id", "label", "started", "ended", "returncode", "stopped")}
-    s["device"] = "Busy" if s["running"] else "Free"
-    s["devices_connected"] = _adb_devices()
-    s["report_available"] = (REPO_ROOT / "automation_report.html").exists()
-    return JSONResponse(s)
+        runs = [
+            {"run_id": rid, "label": r.get("label"), "display": r.get("display"),
+             "device": r.get("device"), "started": r.get("started"),
+             "slot": r.get("slot"), "app_name": r.get("app_name"),
+             "agent_id": r.get("agent_id")}
+            for rid, r in _active_runs().items()
+        ]
+        used = len(runs)
+    return JSONResponse({
+        "runs": runs,
+        "slots_used": used,
+        "slots_total": PARALLEL_SLOTS,
+        "devices_connected": _adb_devices() or [],
+        "report_available": (REPO_ROOT / "automation_report.html").exists(),
+    })
 
 
 @app.get("/history")
@@ -465,8 +489,10 @@ def log(run_id: str = "", offset: int = 0):
             return PlainTextResponse("", headers={"X-Offset": "0"})
         path = RUNS_DIR / f"run_{run_id}.log"
     else:
+        # No run_id → newest active run's log (best-effort convenience).
         with _lock:
-            path = Path(STATE["log_path"]) if STATE["log_path"] else None
+            act = sorted(_active_runs().values(), key=lambda r: r.get("started") or 0)
+            path = Path(act[-1]["log_path"]) if act else None
 
     if not path or not path.exists():
         return PlainTextResponse("", headers={"X-Offset": str(offset)})
@@ -522,15 +548,21 @@ def run(
         if not remote.get("appium_url"):
             return JSONResponse({"ok": False, "error": f"Appium isn't running on {remote['name']} yet — finish the one-command setup on that laptop (it installs + starts Appium), then click Run here again."}, status_code=400)
 
-    with _lock:
-        if STATE["running"]:
-            return JSONResponse(
-                {"ok": False, "error": "Device busy — a run is already in progress."},
-                status_code=409,
-            )
+    # Target device: the bridge's device, or the chosen local serial.
+    if remote:
+        target_device = remote["serial"]
+    else:
+        target_device = device
+        if not target_device:
+            _devs = _adb_devices() or []
+            if len(_devs) == 1:
+                target_device = _devs[0]
+            elif len(_devs) > 1:
+                return JSONResponse(
+                    {"ok": False, "error": "Multiple devices connected — choose which one to run on."},
+                    status_code=400)
 
-    # Prepare the selected branch's worktree OUTSIDE the lock (git fetch/checkout
-    # can be slow, and we must not block /status polls).
+    # Prepare the branch worktree OUTSIDE the lock (git can be slow).
     try:
         run_cwd = _prepare_worktree(ref)
     except Exception as e:
@@ -539,74 +571,76 @@ def run(
     ref_tag = "" if run_cwd == str(REPO_ROOT) else f" @{ref}"
 
     with _lock:
-        if STATE["running"]:
+        # One run per device …
+        if target_device and _device_active_run(target_device):
+            return JSONResponse({"ok": False, "error": "That device already has a run in progress."},
+                                status_code=409)
+        # … and at most PARALLEL_SLOTS at once (shared AltTester Desktop capacity).
+        slot = _free_slot()
+        if slot is None:
             return JSONResponse(
-                {"ok": False, "error": "Device busy — a run is already in progress."},
-                status_code=409,
-            )
+                {"ok": False, "error": f"{PARALLEL_SLOTS} parallel runs already in progress — stop one first."},
+                status_code=409)
 
-        # Build the exact non-interactive command run_this.py understands.
+        # Unique run_id even if two starts land in the same second.
+        base = time.strftime("%Y%m%d_%H%M%S")
+        run_id, n = base, 1
+        while run_id in RUNS or _meta_path(run_id).exists():
+            n += 1
+            run_id = f"{base}_{n}"
+
         cmd = [PYTHON, "-u", "run_this.py"]
         if mode == "test" and test:
             cmd += ["--test", test]
             label = f"{project}: {test}{ref_tag}"
-            display = test                       # dropdown shows the test name
+            display = test
         else:
             rt = run_type if run_type in RUN_TYPES else "complete"
             cmd += ["--run-type", rt]
             label = f"{project}: {rt}{ref_tag}"
-            display = rt.capitalize()            # dropdown shows the run type
+            display = rt.capitalize()
         cmd += ["--slack", "on" if slack == "on" else "off"]
         cmd += ["--report", "on" if report == "on" else "off"]
         cmd += ["--screenshots", "on" if screenshots == "on" else "off"]
         if remote:
             label += f"  →  {remote['name']}"
 
-        run_id = time.strftime("%Y%m%d_%H%M%S")
         log_path = RUNS_DIR / f"run_{run_id}.log"
         log_file = open(log_path, "wb")
 
         env = os.environ.copy()
-        env["PYTHONUNBUFFERED"] = "1"   # stream logs promptly
-        # The GUI owns build fetching (the "Check for new builds" button), so a
-        # run never auto-downloads / force-overrides the chosen build.
+        env["PYTHONUNBUFFERED"] = "1"
         env["SAT_SKIP_BUILD_FETCH"] = "1"
+        # Per-run parallel identity: unique AltTester app-name + Appium systemPort.
+        env["SAT_APP_NAME"] = f"sorry{slot}"
+        env["SAT_SYSTEM_PORT"] = str(8199 + slot)
         if remote:
-            # Point adb + Appium at the bridge laptop's device
-            # (utils/env_config.apply_remote_adb reads these at run_this import).
             env["SAT_ADB_HOST"] = remote["ip"]
             env["SAT_ADB_PORT"] = str(remote["adb_port"])
             env["SAT_DEVICE_ID"] = remote["serial"]
             if remote["appium_url"]:
                 env["SAT_APPIUM_URL"] = remote["appium_url"]
             if remote.get("install_url"):
-                # Bridge installs the build locally over USB (robust) instead of
-                # the server pushing it over the adb relay.
                 env["SAT_BRIDGE_INSTALL_URL"] = remote["install_url"]
-
-        # Selected build (install/run this exact APK on whatever device is used).
         if build:
             apk = APK_FOLDER / os.path.basename(build)
             if apk.exists():
                 env["SAT_APK"] = str(apk)
-        # Selected device for a LOCAL run (bridge runs get their device above).
-        if device and not remote:
-            env["SAT_DEVICE_ID"] = device
+        if target_device and not remote:
+            env["SAT_DEVICE_ID"] = target_device
 
         proc = subprocess.Popen(
-            cmd,
-            cwd=run_cwd,               # the selected branch's worktree (or REPO_ROOT)
-            stdout=log_file,
-            stderr=subprocess.STDOUT,
-            env=env,
-            start_new_session=True,   # own process group → Stop can kill the tree
+            cmd, cwd=run_cwd, stdout=log_file, stderr=subprocess.STDOUT,
+            env=env, start_new_session=True,
         )
 
-        STATE.update(
-            running=True, run_id=run_id, label=label, started=time.time(),
-            ended=None, returncode=None, log_path=str(log_path), proc=proc,
-            stopped=False, agent_id=(remote["agent_id"] if remote else None),
-        )
+        RUNS[run_id] = {
+            "proc": proc, "log_path": str(log_path), "log_file": log_file,
+            "label": label, "display": display, "project": project,
+            "started": time.time(), "ended": None, "returncode": None,
+            "stopped": False, "agent_id": (remote["agent_id"] if remote else None),
+            "device": target_device, "slot": slot, "app_name": f"sorry{slot}",
+        }
         if remote:
             with _agents_lock:
                 ra = AGENTS.get(remote["agent_id"])
@@ -615,48 +649,34 @@ def run(
                     ra["run_id"] = run_id
 
     _write_meta(run_id, project=project, label=label, display=display,
-                started=time.time(), status="running", returncode=None, ended=None)
+                started=time.time(), status="running", returncode=None, ended=None,
+                device=target_device)
     _prune()
-    threading.Thread(target=_watch, args=(proc, run_id, log_file), daemon=True).start()
-    return JSONResponse({"ok": True, "run_id": run_id, "label": label, "cmd": " ".join(cmd)})
+    threading.Thread(target=_watch, args=(run_id,), daemon=True).start()
+    return JSONResponse({"ok": True, "run_id": run_id, "label": label,
+                         "slot": slot, "device": target_device, "cmd": " ".join(cmd)})
 
 
 @app.post("/stop")
-def stop():
-    """Stop the active run — SIGKILL the process group if it's alive, and ALWAYS
-    clear the running state so the UI unsticks even if the process already
-    exited but STATE was left stale."""
+def stop(run_id: str = Form(""), device: str = Form("")):
+    """Stop ONE run — by run_id, or by the device it's running on. SIGKILLs the
+    process group; _watch then frees the slot + bridge and records the result."""
     with _lock:
-        proc = STATE["proc"]
-        was_active = STATE["running"] or proc is not None
-        if was_active:
-            STATE["stopped"] = True
-    if not was_active:
-        return JSONResponse({"ok": False, "error": "No run in progress."}, status_code=400)
+        rid = run_id
+        if not rid and device:
+            rid = _device_active_run(device)
+        r = RUNS.get(rid) if rid else None
+        if r is None:
+            return JSONResponse({"ok": False, "error": "No such run in progress."}, status_code=400)
+        r["stopped"] = True
+        proc = r.get("proc")
 
-    # Kill the whole process group if the process is still alive.
     if proc is not None and proc.poll() is None:
         try:
             _kill_proc_tree(proc)
         except Exception as e:
             return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
-
-    # Always flip to Free — even if the process was already gone (stale state).
-    freed_agent = None
-    with _lock:
-        STATE["running"] = False
-        STATE["proc"] = None
-        if STATE["ended"] is None:
-            STATE["ended"] = time.time()
-        freed_agent = STATE.get("agent_id")
-        STATE["agent_id"] = None
-    if freed_agent:
-        with _agents_lock:
-            a = AGENTS.get(freed_agent)
-            if a:
-                a["status"] = "idle"
-                a["run_id"] = None
-    return JSONResponse({"ok": True})
+    return JSONResponse({"ok": True, "run_id": rid})
 
 
 @app.get("/builds")

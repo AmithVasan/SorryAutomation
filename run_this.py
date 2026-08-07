@@ -1205,15 +1205,21 @@ def _run_single_device(run_type="complete", individual_tests=None):
     state.set("device_id", device_id)
     logging.info(f"📱 device_id stored in state: {device_id}")
 
-    # ── APK install: prefer USB even in WiFi mode (much faster) ──────────
-    # device_id may be a WiFi IP (10.x.x.x:5555). If a USB cable is also
-    # plugged in, push the APK over USB and let WiFi handle everything else.
-    usb_id = _get_usb_device_id()
-    if usb_id and usb_id != device_id:
-        logging.info(f"⚡ USB detected ({usb_id}) — installing APK over USB (faster)")
-        install_apk(usb_id)
-    else:
+    # ── APK install ──────────────────────────────────────────────────────
+    # When a device is explicitly targeted (SAT_DEVICE_ID — the webapp always
+    # sets it, incl. parallel runs), install EXACTLY there. The "push over USB"
+    # shortcut below is only for auto-WiFi single-device mode, where device_id is
+    # a WiFi IP and _get_usb_device_id() unambiguously means the same phone — with
+    # two devices plugged in it could otherwise pick the WRONG one.
+    if os.environ.get("SAT_DEVICE_ID"):
         install_apk(device_id)
+    else:
+        usb_id = _get_usb_device_id()
+        if usb_id and usb_id != device_id:
+            logging.info(f"⚡ USB detected ({usb_id}) — installing APK over USB (faster)")
+            install_apk(usb_id)
+        else:
+            install_apk(device_id)
 
     # Parallel identity: each concurrent run gets a unique AltTester app-name
     # (SAT_APP_NAME) and Appium systemPort (SAT_SYSTEM_PORT). Single runs leave
