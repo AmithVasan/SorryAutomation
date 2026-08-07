@@ -37,8 +37,10 @@ import socket
 import shutil
 import threading
 import subprocess
+import tempfile
 import urllib.request
-from urllib.parse import urlparse
+from urllib.parse import urlparse, quote
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 SERVER = os.environ.get("SAT_SERVER", "").rstrip("/")
 if not SERVER:
@@ -50,6 +52,7 @@ SERVER_HOST    = urlparse(SERVER).hostname or "127.0.0.1"
 ALT_PORT       = int(os.environ.get("ALT_PORT", "13000"))
 ADB_RELAY_PORT = int(os.environ.get("ADB_RELAY_PORT", "5038"))
 APPIUM_PORT    = int(os.environ.get("APPIUM_PORT", "4723"))
+INSTALL_PORT   = int(os.environ.get("INSTALL_PORT", "8799"))
 NAME           = os.environ.get("SAT_AGENT_NAME", socket.gethostname())
 AGENT_ID       = os.environ.get("SAT_AGENT_ID", socket.gethostname())
 
@@ -206,6 +209,7 @@ def register():
         "agent_id": AGENT_ID, "name": NAME, "devices": devs, "kind": "bridge",
         "ip": ip, "adb_port": ADB_RELAY_PORT,
         "appium_url": (f"http://{ip}:{APPIUM_PORT}" if appium_ok else None),
+        "install_url": f"http://{ip}:{INSTALL_PORT}",
         "device_props": device_props(devs),
     })
     log(f"{'registered' if ok else 'register FAILED (server reachable?)'}: "
@@ -250,6 +254,75 @@ def start_appium():
     return p
 
 
+# ── local install server ──────────────────────────────────────────────────────
+# The server asks us (POST /install {build, serial}) to pull the build from the
+# server over HTTP and `adb install` it LOCALLY over USB — reliable, unlike the
+# server pushing a ~380MB APK back over the adb relay.
+def _local_install(build, serial):
+    if not build:
+        return False, "no build specified"
+    url = f"{SERVER}/build?name={quote(build)}"
+    tmp = os.path.join(tempfile.gettempdir(), build)
+    try:
+        log(f"install: downloading {build} from server…")
+        urllib.request.urlretrieve(url, tmp)
+    except Exception as e:
+        return False, f"download failed: {e}"
+    try:
+        args = [ADB] + (["-s", serial] if serial else []) + ["install", "-r", "-d", tmp]
+        log(f"install: adb install locally on {serial or 'default device'}…")
+        r = subprocess.run(args, capture_output=True, text=True, timeout=1200)
+        out = (r.stdout + r.stderr).strip()
+        ok = not (r.returncode != 0 or "Failure" in out or "Exception" in out
+                  or ("error" in out.lower() and "0 errors" not in out.lower()))
+        log(f"install: {'OK' if ok else 'FAILED'} → {out}")
+        return ok, out
+    except Exception as e:
+        return False, f"adb install failed: {e}"
+    finally:
+        try:
+            os.remove(tmp)
+        except Exception:
+            pass
+
+
+class _InstallHandler(BaseHTTPRequestHandler):
+    def log_message(self, *a):
+        pass
+
+    def _reply(self, obj, code=200):
+        data = json.dumps(obj).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def do_POST(self):
+        if self.path.rstrip("/") != "/install":
+            self._reply({"ok": False, "output": "not found"}, 404)
+            return
+        try:
+            n = int(self.headers.get("Content-Length", "0"))
+            body = json.loads(self.rfile.read(n) or b"{}")
+        except Exception as e:
+            self._reply({"ok": False, "output": f"bad request: {e}"}, 400)
+            return
+        ok, out = _local_install(os.path.basename(body.get("build", "") or ""),
+                                 body.get("serial", ""))
+        self._reply({"ok": ok, "output": out})
+
+
+def start_install_server():
+    try:
+        srv = ThreadingHTTPServer(("0.0.0.0", INSTALL_PORT), _InstallHandler)
+    except Exception as e:
+        log(f"⚠️ install server bind failed on {INSTALL_PORT}: {e}")
+        return
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    log(f"install server on 0.0.0.0:{INSTALL_PORT}")
+
+
 def main():
     log(f"server={SERVER}   adb={ADB}")
     subprocess.run([ADB, "start-server"], capture_output=True)
@@ -264,6 +337,7 @@ def main():
 
     threading.Thread(target=_relay, args=(ADB_RELAY_PORT, "127.0.0.1", 5037), daemon=True).start()
     threading.Thread(target=_relay, args=(ALT_PORT, SERVER_HOST, ALT_PORT), daemon=True).start()
+    start_install_server()
     start_appium()
     register()
     log("✅ bridge ready — open the webapp on the server and click ▶ Run here on this device. "

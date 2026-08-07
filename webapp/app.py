@@ -516,7 +516,7 @@ def run(
             chosen = device if (device and device in devs) else (devs[0] if devs else None)
             remote = {"agent_id": agent, "name": a.get("name", agent), "ip": a.get("ip"),
                       "adb_port": a.get("adb_port") or 5038, "appium_url": a.get("appium_url"),
-                      "serial": chosen}
+                      "install_url": a.get("install_url"), "serial": chosen}
         if not remote["ip"] or not remote["serial"]:
             return JSONResponse({"ok": False, "error": "Bridge has no device ready (plug in + enable USB debugging)."}, status_code=400)
         if not remote.get("appium_url"):
@@ -579,6 +579,10 @@ def run(
             env["SAT_DEVICE_ID"] = remote["serial"]
             if remote["appium_url"]:
                 env["SAT_APPIUM_URL"] = remote["appium_url"]
+            if remote.get("install_url"):
+                # Bridge installs the build locally over USB (robust) instead of
+                # the server pushing it over the adb relay.
+                env["SAT_BRIDGE_INSTALL_URL"] = remote["install_url"]
 
         # Selected build (install/run this exact APK on whatever device is used).
         if build:
@@ -659,6 +663,19 @@ def stop():
 def builds_list():
     """Available builds (APKs) in the build folder, newest first."""
     return JSONResponse({"builds": _list_builds()})
+
+
+@app.get("/build")
+def build_download(name: str = ""):
+    """Serve a build APK so a bridge can pull it and install locally over USB
+    (basename-only, path-traversal guarded)."""
+    safe = os.path.basename(name or "")
+    p = APK_FOLDER / safe
+    if safe.endswith(".apk") and p.exists():
+        return FileResponse(str(p),
+                            media_type="application/vnd.android.package-archive",
+                            filename=safe)
+    return PlainTextResponse("build not found", status_code=404)
 
 
 @app.post("/builds/refresh")
@@ -935,6 +952,7 @@ async def agent_register(req: Request):
             "ip": body.get("ip"),
             "adb_port": body.get("adb_port"),
             "appium_url": body.get("appium_url"),
+            "install_url": body.get("install_url"),
             "device_props": body.get("device_props") or {},
         }
         AGENT_JOBS.setdefault(aid, [])

@@ -625,6 +625,22 @@ def _adb_install_once(device_id, apk_path, extra_args):
     return ok, output
 
 
+def _bridge_install(bridge_url, build_name, serial, timeout=1800):
+    """Bridge mode: ask the laptop to download the build from the server and
+    `adb install` it LOCALLY over USB — avoids pushing the ~380MB APK over the
+    adb relay (which breaks mid-transfer). Returns (ok, output). Never raises."""
+    import urllib.request
+    payload = json.dumps({"build": build_name, "serial": serial}).encode()
+    req = urllib.request.Request(bridge_url.rstrip("/") + "/install", data=payload,
+                                 headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            resp = json.loads(r.read().decode())
+        return bool(resp.get("ok")), (resp.get("output") or "")
+    except Exception as e:
+        return False, f"bridge install request failed: {e}"
+
+
 def install_apk(device_id):
     """Guarantee THIS device has our exact AltTester APK.
 
@@ -680,20 +696,25 @@ def install_apk(device_id):
     else:
         logging.info(f"📦 App not present on {device_id} → installing AltTester APK")
 
-    logging.info("📦 Installing APK (may take a moment over WiFi / bridge)...")
+    logging.info("📦 Installing APK...")
 
-    # Attempt 1: normal (streamed) install, allowing downgrade.
-    ok, output = _adb_install_once(device_id, apk_path, [])
-    if output:
-        logging.info(f"   adb install → {output}")
-
-    # Attempt 2: some devices / links (Android 16, flaky bridge) fail the
-    # streamed path — retry pushing the APK first (--no-streaming).
-    if not ok:
-        logging.warning("⚠️ Install failed → retrying with --no-streaming...")
-        ok, output = _adb_install_once(device_id, apk_path, ["--no-streaming"])
+    bridge_url = os.environ.get("SAT_BRIDGE_INSTALL_URL")
+    if bridge_url:
+        # Bridge mode: the laptop pulls the build from the server over HTTP and
+        # installs it over USB — reliable, unlike pushing 380MB over the adb relay.
+        logging.info(f"📲 Installing via bridge ({bridge_url}) — laptop downloads the build + installs over USB...")
+        ok, output = _bridge_install(bridge_url, os.path.basename(apk_path), device_id)
+        logging.info(f"   bridge install → {output or ('ok' if ok else 'failed')}")
+    else:
+        # Local: streamed install (allow downgrade), retry with --no-streaming.
+        ok, output = _adb_install_once(device_id, apk_path, [])
         if output:
-            logging.info(f"   adb install (no-streaming) → {output}")
+            logging.info(f"   adb install → {output}")
+        if not ok:
+            logging.warning("⚠️ Install failed → retrying with --no-streaming...")
+            ok, output = _adb_install_once(device_id, apk_path, ["--no-streaming"])
+            if output:
+                logging.info(f"   adb install (no-streaming) → {output}")
 
     if not ok:
         raise RuntimeError(f"❌ APK install failed: {output or '(no adb output)'}")
