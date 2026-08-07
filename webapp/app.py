@@ -686,12 +686,32 @@ def stop(run_id: str = Form(""), device: str = Form("")):
             return JSONResponse({"ok": False, "error": "No such run in progress."}, status_code=400)
         r["stopped"] = True
         proc = r.get("proc")
+        rdev, rslot, ragent = r.get("device"), r.get("slot"), r.get("agent_id")
 
     if proc is not None and proc.poll() is None:
         try:
             _kill_proc_tree(proc)
         except Exception as e:
             return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+    # SIGKILL skips run_this's own teardown, so a stopped LOCAL run would leave
+    # its game running (app-name lingering) + its Appium systemPort forwarded —
+    # which then collides when the slot is reused. Clean both here, best-effort.
+    if rdev and not ragent:
+        adb = os.environ.get("SAT_ADB") or shutil.which("adb")
+        if adb:
+            try:
+                subprocess.run([adb, "-s", rdev, "shell", "am", "force-stop",
+                                "com.gameberry.sorry.card.board.game"],
+                               capture_output=True, timeout=15)
+            except Exception:
+                pass
+            if rslot:
+                try:
+                    subprocess.run([adb, "-s", rdev, "forward", "--remove", f"tcp:{8199 + rslot}"],
+                                   capture_output=True, timeout=15)
+                except Exception:
+                    pass
     return JSONResponse({"ok": True, "run_id": rid})
 
 

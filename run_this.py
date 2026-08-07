@@ -1229,6 +1229,21 @@ def _run_single_device(run_type="complete", individual_tests=None):
 
     # Serialise launch→rename so only one run is transiently on "sorry" at a time.
     with _alt_launch_lock(enabled=bool(target_app)):
+        if target_app:
+            # Clean stale state from any prior (possibly SIGKILLed) run on this
+            # device/slot BEFORE launching: force-stop the game so it re-registers
+            # under the baked default "sorry" (a fresh base for the rename — not a
+            # lingering "sorry1"/"sorry2"), and drop this slot's Appium systemPort
+            # forward so the new UiAutomator2 session isn't rejected with
+            # "local port #<systemPort> is busy".
+            logging.info(f"🧹 Resetting {device_id} for a clean parallel start "
+                         f"(force-stop + free systemPort {system_port})…")
+            subprocess.run([ADB_PATH, "-s", device_id, "shell", "am", "force-stop", PACKAGE_NAME],
+                           capture_output=True, timeout=20)
+            if system_port:
+                subprocess.run([ADB_PATH, "-s", device_id, "forward", "--remove", f"tcp:{system_port}"],
+                               capture_output=True, timeout=20)
+            time.sleep(1)
         setup_reverse_forward(device_id)
         launch_game(device_id)
 
