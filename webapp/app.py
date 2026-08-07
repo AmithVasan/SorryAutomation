@@ -447,12 +447,24 @@ def status():
             for rid, r in _active_runs().items()
         ]
         used = len(runs)
+    # Back-compat single-run view (mirrors the newest active run) so the current
+    # UI keeps working until the per-device-row multi-run UI lands.
+    newest = max(runs, key=lambda r: r.get("started") or 0) if runs else None
     return JSONResponse({
         "runs": runs,
         "slots_used": used,
         "slots_total": PARALLEL_SLOTS,
         "devices_connected": _adb_devices() or [],
         "report_available": (REPO_ROOT / "automation_report.html").exists(),
+        # legacy fields:
+        "running": bool(newest),
+        "run_id": newest["run_id"] if newest else None,
+        "label": newest["label"] if newest else None,
+        "started": newest["started"] if newest else None,
+        "ended": None,
+        "returncode": None,
+        "stopped": False,
+        "device": "Busy" if newest else "Free",
     })
 
 
@@ -665,6 +677,10 @@ def stop(run_id: str = Form(""), device: str = Form("")):
         rid = run_id
         if not rid and device:
             rid = _device_active_run(device)
+        if not rid:
+            # No target → newest active run (back-compat with the single Stop button).
+            act = sorted(_active_runs().items(), key=lambda kv: kv[1].get("started") or 0)
+            rid = act[-1][0] if act else None
         r = RUNS.get(rid) if rid else None
         if r is None:
             return JSONResponse({"ok": False, "error": "No such run in progress."}, status_code=400)
