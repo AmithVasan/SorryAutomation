@@ -80,7 +80,7 @@
         </select>
       </div>
 
-      <label class="field">
+      <label class="field hidden">
         <span>Device</span>
         <select name="device" id="device">
           <option value="">Auto (first connected)</option>
@@ -103,8 +103,8 @@
       </div>
 
       <div class="actions">
-        <button type="submit" id="run-btn" class="btn btn-run">▶ Run</button>
-        <button type="button" id="stop-btn" class="btn btn-stop" disabled>■ Stop</button>
+        <button type="submit" id="run-btn" class="btn btn-run hidden">▶ Run</button>
+        <button type="button" id="stop-btn" class="btn btn-stop hidden" disabled>■ Stop</button>
         <a href="/report" target="_blank" id="report-link" class="btn btn-ghost disabled">📄 Report</a>
         <a href="/screenshots.zip" id="shots-link" class="btn btn-ghost disabled" title="Download every step screenshot from the latest report as a zip">📸 Screenshots</a>
         <select id="reports-select" class="history" title="Open a past report (named run-type + date + time)">
@@ -120,7 +120,7 @@
 
     <section class="agents-panel">
       <div class="agents-head">
-        <span>Remote devices <span class="hint">— uses the options selected above</span></span>
+        <span>Devices <span class="hint">— pick a device row and hit ▶ Run; up to 2 run at once</span></span>
         <button type="button" id="onboard-btn" class="mini-btn" onclick="toggleOnboard()">＋ Add a device</button>
       </div>
 
@@ -303,15 +303,11 @@
       setTimeout(() => { refreshBuildsBtn.textContent = old; }, 2000);
     });
 
-    // ── Device selection (local runs) ────────────────────────────────────────────
+    // ── Local (server-connected) devices → rows in the Devices panel ──────────────
     let lastDevSig = null;
     async function loadDevices() {
-      let list = [];
-      try { list = (await (await fetch('/devices')).json()).devices || []; } catch (e) { return; }
-      const cur = deviceSel.value;
-      deviceSel.innerHTML = '<option value="">Auto (first connected)</option>' +
-        list.map(d => `<option value="${d.serial}">${d.name} — ${d.serial}</option>`).join('');
-      if ([...deviceSel.options].some(o => o.value === cur)) deviceSel.value = cur;
+      try { localDevices = (await (await fetch('/devices')).json()).devices || []; }
+      catch (e) { localDevices = []; }
     }
     const logEl = document.getElementById('log');
     const devicePill = document.getElementById('device-pill');
@@ -330,6 +326,8 @@
     let isAgentRun = false;       // true when the shown run is on a remote agent
     let onboardOS = 'unix';       // "Add a device" panel: selected OS
     let onboardOpen = false;      // "Add a device" panel: visible?
+    let statusRuns = [];          // active runs from /status (multi-run)
+    let localDevices = [];        // this server's connected devices (named)
 
     // ── Project selection: theme + runnable gating ────────────────────────────
     function projectRunnable() {
@@ -465,123 +463,153 @@
       } catch (e) { /* transient */ }
     }
     async function pollStatus() {
-      try {
-        const s = await (await fetch('/status')).json();
-        const busy = s.running;
-        devicePill.className = 'pill ' + (busy ? 'pill-busy' : 'pill-free');
-        deviceText.textContent = busy ? 'Busy' : 'Free';
-        runBtn.disabled = busy || !projectRunnable();
-        stopBtn.disabled = !busy;              // Stop is for the LOCAL run only
-        reportLink.classList.toggle('disabled', !s.report_available);
-        shotsLink.classList.toggle('disabled', !s.report_available);
-        loadReports();
-        const devSig = (s.devices_connected || []).join(',');
-        if (devSig !== lastDevSig) { lastDevSig = devSig; loadDevices(); }
+      let s;
+      try { s = await (await fetch('/status')).json(); }
+      catch (e) { return; }   // server not reachable yet
+      statusRuns = s.runs || [];
+      const running = statusRuns.length;
+      devicePill.className = 'pill ' + (running ? 'pill-busy' : 'pill-free');
+      deviceText.textContent = running ? `${running}/${s.slots_total} running` : 'Free';
+      reportLink.classList.toggle('disabled', !s.report_available);
+      shotsLink.classList.toggle('disabled', !s.report_available);
+      loadReports();
+      const devSig = (s.devices_connected || []).join(',');
+      if (devSig !== lastDevSig) { lastDevSig = devSig; await loadDevices(); }
 
-        // Local-run tracking — only when the shown run is the local one.
-        if (!isAgentRun) {
-          if (busy) {
-            if (currentRun !== s.run_id) { currentRun = s.run_id; }
-            if (!startedAt && s.started) startedAt = s.started;
-            if (!viewingHistory) {
-              statusLabel.textContent = '● Running — ' + (s.label || '');
-              if (s.started) statusTimer.textContent = fmtElapsed(Math.floor(Date.now()/1000 - s.started));
-            }
-          } else if (currentRun) {
-            const finishing = currentRun;
-            await pollLog();                     // final pull
-            if (currentRun === finishing && !isAgentRun) {
-              let verdict;
-              if (s.stopped) verdict = '■ Stopped';
-              else verdict = (s.returncode === 0) ? '✅ Finished'
-                                                  : '❌ Failed (exit ' + s.returncode + ')';
-              if (!viewingHistory) statusLabel.textContent = verdict + ' — ' + (s.label || '');
+      loadAgents();   // redraw device + bridge rows from statusRuns + localDevices
+
+      // Console follows the SELECTED run (currentRun), tracked by its own id.
+      if (currentRun && !viewingHistory) {
+        const run = statusRuns.find(r => r.run_id === currentRun);
+        if (run) {
+          if (!startedAt && run.started) startedAt = run.started;
+          statusLabel.textContent = '● Running — ' + (run.label || '')
+            + (run.slot ? ' [slot ' + run.slot + ']' : '');
+          if (startedAt) statusTimer.textContent = fmtElapsed(Math.floor(Date.now()/1000 - startedAt));
+        } else {
+          const finishing = currentRun;
+          await pollLog();   // final pull
+          try {
+            const info = await (await fetch('/runinfo?run_id=' + finishing)).json();
+            if (currentRun === finishing) {
+              const v = info.status === 'passed' ? '✅ Finished'
+                      : info.status === 'stopped' ? '■ Stopped' : '❌ Failed';
+              statusLabel.textContent = v + ' — ' + (info.label || '');
+              statusTimer.textContent = '';
               currentRun = null; startedAt = null;
               loadHistory();
             }
-          }
+          } catch (e) { /* transient */ }
         }
-      } catch (e) { /* server not reachable yet */ }
-
-      loadAgents();
-
-      // Agent-run tracking — status comes from the run's metadata, not STATE.
-      if (isAgentRun && currentRun && !viewingHistory) {
-        try {
-          const info = await (await fetch('/runinfo?run_id=' + currentRun)).json();
-          if (info.running) {
-            statusLabel.textContent = '● Running (remote) — ' + (info.label || '');
-            if (startedAt) statusTimer.textContent = fmtElapsed(Math.floor(Date.now()/1000 - startedAt));
-          } else {
-            const finishing = currentRun;
-            await pollLog();                     // final pull
-            if (currentRun === finishing) {
-              const v = info.status === 'passed' ? '✅ Finished'
-                      : info.status === 'stopped' ? '■ Stopped'
-                      : '❌ Failed';
-              statusLabel.textContent = v + ' (remote) — ' + (info.label || '');
-              isAgentRun = false; currentRun = null; startedAt = null;
-              loadHistory();
-            }
-          }
-        } catch (e) { /* transient */ }
       }
     }
 
     // ── Remote agents ─────────────────────────────────────────────────────────
+    // Redraw the Devices panel: this server's local devices + connected bridges,
+    // each a row with its own ▶ Run / ■ Stop. Up to PARALLEL_SLOTS run at once.
     async function loadAgents() {
-      let list = [];
-      try { list = (await (await fetch('/agents')).json()).agents || []; } catch (e) { return; }
-      if (onboardOpen) updateOnboardStatus(list);
+      let bridges = [];
+      try { bridges = (await (await fetch('/agents')).json()).agents || []; } catch (e) {}
+      if (onboardOpen) updateOnboardStatus(bridges);
       const box = document.getElementById('agents');
-      if (!list.length) {
-        box.innerHTML = '<div class="agent-empty">No remote agents connected.</div>';
+      const rows = [];
+
+      localDevices.forEach(d => {
+        const run = statusRuns.find(r => r.device === d.serial && !r.agent_id);
+        rows.push(deviceRow({
+          dot: run ? 'busy' : 'idle', name: d.name, sub: d.serial, run,
+          onRun: () => runOnDevice(d.serial, d.name),
+        }));
+      });
+
+      bridges.forEach(a => {
+        const dl = (a.device_list && a.device_list.length)
+          ? a.device_list : (a.devices || []).map(s => ({ serial: s, name: s }));
+        const online = a.status !== 'offline';
+        const run = statusRuns.find(r => r.agent_id === a.agent_id);
+        const chosen = { v: dl[0] ? dl[0].serial : '' };
+        rows.push(deviceRow({
+          dot: run ? 'busy' : (online ? 'idle' : 'offline'),
+          name: a.name + ' (bridge)',
+          sub: dl.length === 1 ? dl[0].name : (dl.length ? '' : 'no device'),
+          picker: dl.length > 1 ? dl : null, chosen, run,
+          disabled: !online || dl.length === 0,
+          onRun: () => runOnBridge(a.agent_id, a.name, chosen.v),
+        }));
+      });
+
+      if (!rows.length) {
+        box.innerHTML = '<div class="agent-empty">No devices connected — plug one into this laptop, or ＋ Add a device.</div>';
         return;
       }
       box.innerHTML = '';
-      list.forEach(a => {
-        const dl = (a.device_list && a.device_list.length)
-          ? a.device_list
-          : (a.devices || []).map(s => ({ serial: s, name: s }));
-        const row = document.createElement('div');
-        row.className = 'agent-row';
-        row.innerHTML =
-          `<span class="agent-dot ${a.status}"></span>` +
-          `<span class="agent-name">${a.name}</span>`;
+      rows.forEach(r => box.appendChild(r));
+    }
 
-        // Device: a friendly label for one, or a picker when several are attached
-        // (so the user chooses instead of defaulting to first-connected).
-        let chosenDevice = () => (dl[0] ? dl[0].serial : '');
-        if (dl.length > 1) {
-          const sel = document.createElement('select');
-          sel.className = 'history agent-dev-select';
-          sel.title = 'Choose which of this laptop’s devices to run on';
-          sel.innerHTML = dl.map(d => `<option value="${d.serial}">${d.name}</option>`).join('');
-          row.appendChild(sel);
-          chosenDevice = () => sel.value;
-        } else {
-          const span = document.createElement('span');
-          span.className = 'agent-dev';
-          span.textContent = dl.length ? dl[0].name : 'no device';
-          row.appendChild(span);
-        }
+    function deviceRow(o) {
+      const row = document.createElement('div');
+      row.className = 'agent-row';
+      const dot = document.createElement('span'); dot.className = 'agent-dot ' + o.dot; row.appendChild(dot);
+      const name = document.createElement('span'); name.className = 'agent-name'; name.textContent = o.name; row.appendChild(name);
+      if (o.picker) {
+        const sel = document.createElement('select');
+        sel.className = 'history agent-dev-select';
+        sel.title = 'Choose which of this laptop’s devices to run on';
+        sel.innerHTML = o.picker.map(d => `<option value="${d.serial}">${d.name}</option>`).join('');
+        o.chosen.v = o.picker[0].serial;
+        sel.onchange = () => { o.chosen.v = sel.value; };
+        row.appendChild(sel);
+      } else if (o.sub) {
+        const sub = document.createElement('span'); sub.className = 'agent-dev'; sub.textContent = o.sub; row.appendChild(sub);
+      }
+      const st = document.createElement('span'); st.className = 'agent-st';
+      st.textContent = o.run ? ('running' + (o.run.slot ? ' · slot ' + o.run.slot : '')) : 'idle';
+      row.appendChild(st);
+      if (o.run) {
+        row.style.cursor = 'pointer';
+        row.title = 'Click to view this run’s log';
+        row.onclick = (e) => { if (e.target.tagName !== 'BUTTON') selectRun(o.run.run_id); };
+        const stop = document.createElement('button');
+        stop.type = 'button'; stop.className = 'mini-btn';
+        stop.textContent = (currentRun === o.run.run_id) ? '■ Stop (viewing)' : '■ Stop';
+        stop.onclick = (e) => { e.stopPropagation(); stopRun(o.run.run_id); };
+        row.appendChild(stop);
+      } else {
+        const runb = document.createElement('button');
+        runb.type = 'button'; runb.className = 'mini-btn run'; runb.textContent = '▶ Run';
+        runb.disabled = o.disabled || !projectRunnable();
+        runb.onclick = o.onRun;
+        row.appendChild(runb);
+      }
+      return row;
+    }
 
-        const st = document.createElement('span');
-        st.className = 'agent-st';
-        st.textContent = a.status;
-        row.appendChild(st);
+    function selectRun(runId) {
+      returnToLive();
+      currentRun = runId; logOffset = 0; startedAt = null; logEl.textContent = '';
+      const run = statusRuns.find(r => r.run_id === runId);
+      if (run && run.started) startedAt = run.started;
+    }
 
-        const btn = document.createElement('button');
-        btn.type = 'button';
-        btn.className = 'mini-btn run';
-        btn.textContent = '▶ Run here';
-        btn.disabled = (a.status !== 'idle') || !projectRunnable() || dl.length === 0;
-        btn.onclick = () => (a.kind === 'bridge'
-          ? runOnBridge(a.agent_id, a.name, chosenDevice())
-          : dispatchToAgent(a.agent_id));
-        row.appendChild(btn);
-        box.appendChild(row);
-      });
+    async function runOnDevice(serial, name) {
+      const data = new FormData(form);
+      data.set('device', serial); data.delete('agent');
+      if (!data.get('slack')) data.set('slack', 'off');
+      if (!data.get('report')) data.set('report', 'off');
+      returnToLive(); logEl.textContent = ''; logOffset = 0; currentRun = null; startedAt = null;
+      statusLabel.textContent = '● Starting on ' + name + '…';
+      let j;
+      try { j = await (await fetch('/run', { method: 'POST', body: data })).json(); }
+      catch (e) { statusLabel.textContent = '⚠ could not reach server'; return; }
+      if (!j.ok) { statusLabel.textContent = '⚠ ' + j.error; return; }
+      currentRun = j.run_id; startedAt = Math.floor(Date.now() / 1000);
+      statusLabel.textContent = '● Running — ' + j.label; loadHistory();
+    }
+
+    async function stopRun(runId) {
+      try { await fetch('/stop', { method: 'POST', body: new URLSearchParams({ run_id: runId }) }); }
+      catch (e) {}
+      pollStatus();
     }
 
     async function dispatchToAgent(agentId) {
