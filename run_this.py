@@ -13,6 +13,12 @@ import json
 import re
 import hashlib
 import threading
+import tempfile
+from contextlib import contextmanager
+try:
+    import fcntl   # POSIX file lock for the cross-process AltTester launch lock
+except Exception:
+    fcntl = None
 from utils.report_manager import send_reports
 from utils.driver_manager import set_driver
 from utils.state_manager import state
@@ -58,6 +64,31 @@ APPIUM_URL = os.environ.get("SAT_APPIUM_URL", "http://127.0.0.1:4723")
 
 ALTTESTER_PORT = 13000
 APP_NAME = "sorry"
+
+
+# Cross-process lock that serialises the AltTester launch→rename window, so at
+# most one parallel run is transiently on the default "sorry" app-name at a time
+# (each run then renames to its own unique name and they run fully in parallel).
+_ALT_LAUNCH_LOCKFILE = os.path.join(tempfile.gettempdir(), "sat_alt_launch.lock")
+
+
+@contextmanager
+def _alt_launch_lock(enabled):
+    if not enabled or fcntl is None:
+        yield
+        return
+    f = open(_ALT_LAUNCH_LOCKFILE, "w")
+    try:
+        logging.info("🔒 Waiting for AltTester launch lock (serialise the 'sorry' window)…")
+        fcntl.flock(f, fcntl.LOCK_EX)
+        logging.info("🔓 Launch lock acquired")
+        yield
+    finally:
+        try:
+            fcntl.flock(f, fcntl.LOCK_UN)
+        except Exception:
+            pass
+        f.close()
 
 # --- REMOTE DEVICE MODE (Phase 2) ---
 # When SAT_ADB_HOST is set, point adb + Appium at a device plugged into a
@@ -1184,19 +1215,36 @@ def _run_single_device(run_type="complete", individual_tests=None):
     else:
         install_apk(device_id)
 
-    setup_reverse_forward(device_id)
-    launch_game(device_id)
+    # Parallel identity: each concurrent run gets a unique AltTester app-name
+    # (SAT_APP_NAME) and Appium systemPort (SAT_SYSTEM_PORT). Single runs leave
+    # both unset → behaves exactly as before (app-name "sorry", default port).
+    target_app  = os.environ.get("SAT_APP_NAME")
+    system_port = os.environ.get("SAT_SYSTEM_PORT")
 
-    logging.info("⏳ Waiting for game to register with AltTester...")
-    time.sleep(20)
+    # Serialise launch→rename so only one run is transiently on "sorry" at a time.
+    with _alt_launch_lock(enabled=bool(target_app)):
+        setup_reverse_forward(device_id)
+        launch_game(device_id)
 
-    driver, unity_driver = set_driver(
-        device_id=device_id,
-        app_package=PACKAGE_NAME,
-        app_activity=ACTIVITY_NAME,
-        alt_port=ALTTESTER_PORT,
-        connect_alt=True
-    )
+        logging.info("⏳ Waiting for game to register with AltTester...")
+        time.sleep(20)
+
+        driver, unity_driver = set_driver(
+            device_id=device_id,
+            app_package=PACKAGE_NAME,
+            app_activity=ACTIVITY_NAME,
+            alt_port=ALTTESTER_PORT,
+            connect_alt=True,
+            system_port=system_port,
+        )
+
+        if target_app and target_app != APP_NAME:
+            from utils.alttester_appname import rename_alttester_app
+            unity_driver = rename_alttester_app(
+                unity_driver, target_app,
+                host=os.getenv("SAT_ALT_HOST", "127.0.0.1"),
+                port=ALTTESTER_PORT,
+            )
 
     # Store drivers in state so handlers and tests can
     # access and update them without needing them passed as arguments.

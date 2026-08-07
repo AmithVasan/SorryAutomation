@@ -72,6 +72,7 @@ def set_driver(
     alt_port=13000,
     connect_alt=True,
     app_name="sorry",
+    system_port=None,
 ):
     options = UiAutomator2Options()
     options.set_capability("platformName", "Android")
@@ -80,6 +81,14 @@ def set_driver(
     options.set_capability("appPackage", app_package)
     options.set_capability("appActivity", app_activity)
     options.set_capability("noReset", True)
+
+    # Parallel runs: two UiAutomator2 sessions on ONE Appium server must use
+    # DIFFERENT systemPorts (default 8200), else the second session clobbers the
+    # first. The webapp assigns one per concurrent slot (SAT_SYSTEM_PORT).
+    sp = system_port or os.getenv("SAT_SYSTEM_PORT")
+    if sp:
+        options.set_capability("systemPort", int(sp))
+        logging.info(f"🔌 Appium systemPort = {sp}")
     # Long AltTester-only tests (e.g. Happy Flow) never send an Appium command
     # for several minutes.  A short newCommandTimeout lets the UiAutomator2
     # server KILL the idle session, so the next Google Play purchase fails with
