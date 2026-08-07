@@ -805,54 +805,64 @@ def reconnect_alttester(unity_driver=None):
         except Exception:
             pass
 
-    # Bring game back to foreground via ADB
     device_id = state.get("device_id")
-    if device_id:
-        try:
-            subprocess.run(
-                [ADB_PATH, "-s", device_id, "shell", "am", "start",
-                 "-n", f"{_PACKAGE_NAME}/{_ACTIVITY_NAME}"],
-                check=False, timeout=10
-            )
-            logging.info("📲 [GP] Game brought to foreground")
-            time.sleep(5)
-        except Exception as e:
-            logging.warning(
-                f"⚠️ [GP] Could not bring game to foreground: {e}"
-            )
-    else:
-        logging.warning(
-            "⚠️ [GP] device_id not in state — skipping foreground restore"
-        )
-        time.sleep(5)
 
-    for attempt in range(10):
+    def _try_connect(label):
+        """One AltDriver connect + readiness probe. Returns a driver or None."""
         driver = None
         try:
-            driver = AltDriver(
-                host=_ALT_HOST, port=_ALT_PORT, app_name=_APP_NAME
-            )
-
-            # A successful constructor only means the websocket is up — it does
-            # NOT guarantee the app is responsive yet.  Probe with a real call
-            # so we never hand back a half-ready driver to the next test.
+            driver = AltDriver(host=_ALT_HOST, port=_ALT_PORT, app_name=_APP_NAME)
+            # A successful constructor only means the websocket is up — probe with
+            # a real call so we never hand back a half-ready driver.
             scene = driver.get_current_scene()
-            logging.info(
-                f"✅ [GP] AltTester reconnected & responsive "
-                f"(attempt {attempt + 1}, scene: {scene})"
-            )
+            logging.info(f"✅ [GP] AltTester reconnected & responsive ({label}, scene: {scene})")
             return driver
         except Exception as e:
-            logging.warning(
-                f"⚠️ [GP] Reconnect attempt {attempt + 1} failed: {e}"
-            )
-            # If the driver connected but the readiness probe failed, close it
-            # so the app isn't left with a dangling AltTester connection.
+            logging.warning(f"⚠️ [GP] reconnect {label} failed: {e}")
             if driver is not None:
                 try:
                     driver.stop()
                 except Exception:
                     pass
-            time.sleep(2)
+            return None
 
-    raise RuntimeError("❌ [GP] AltTester reconnect failed after all attempts")
+    def _am(*args, timeout=15):
+        if not device_id:
+            return
+        try:
+            subprocess.run([ADB_PATH, "-s", device_id, "shell", "am", *args],
+                           check=False, timeout=timeout)
+        except Exception as e:
+            logging.warning(f"⚠️ [GP] am {' '.join(args)} failed: {e}")
+
+    # ── 1) Fast path: foreground the game (covers a dropped AltDriver where the
+    #       game's own AltTester client is still connected). Bounded to 3 tries.
+    if device_id:
+        _am("start", "-n", f"{_PACKAGE_NAME}/{_ACTIVITY_NAME}", timeout=10)
+        logging.info("📲 [GP] Game brought to foreground")
+    else:
+        logging.warning("⚠️ [GP] device_id not in state — skipping foreground restore")
+    time.sleep(3)
+    for i in range(3):
+        d = _try_connect(f"foreground {i + 1}/3")
+        if d:
+            return d
+        time.sleep(2)
+
+    # ── 2) Recovery: foreground didn't bring AltTester back → the game's client
+    #       is gone. Foregrounding can't fix that; RESTART the app so its
+    #       AltTester client re-registers, then reconnect. (The adb reverse-forward
+    #       persists across the restart, so this works locally and over the bridge.)
+    if device_id:
+        logging.info("🔁 [GP] Restarting the app to re-register AltTester…")
+        _am("force-stop", _PACKAGE_NAME)
+        time.sleep(2)
+        _am("start", "-n", f"{_PACKAGE_NAME}/{_ACTIVITY_NAME}")
+        time.sleep(12)   # let the game boot + its AltTester client register
+        for i in range(5):
+            d = _try_connect(f"post-restart {i + 1}/5")
+            if d:
+                return d
+            time.sleep(3)
+
+    raise RuntimeError("❌ [GP] AltTester reconnect failed (foreground + restart)")
