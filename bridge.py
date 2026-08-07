@@ -231,6 +231,46 @@ def _ensure_uia2_driver(ap):
         log(f"uiautomator2 driver check/install skipped: {e}")
 
 
+def _android_sdk_root():
+    """A directory Appium can use as ANDROID_HOME (must contain platform-tools/adb).
+    Uses the real SDK if adb lives in one; otherwise (e.g. Homebrew adb) builds a
+    minimal SDK dir with a symlink to adb — enough for the uiautomator2 driver,
+    which errors out if neither ANDROID_HOME nor ANDROID_SDK_ROOT is set."""
+    adb = os.path.abspath(ADB) if (ADB and os.path.exists(ADB)) else (shutil.which("adb") or "")
+    if adb:
+        root = os.path.dirname(os.path.dirname(adb))
+        if os.path.isdir(os.path.join(root, "platform-tools")):
+            return root
+        try:  # adb not in a standard SDK layout → construct a minimal one
+            home = os.path.expanduser("~/.sat_android_home")
+            ptdir = os.path.join(home, "platform-tools")
+            os.makedirs(ptdir, exist_ok=True)
+            link = os.path.join(ptdir, os.path.basename(adb))
+            if not os.path.exists(link):
+                os.symlink(adb, link)
+            return home
+        except Exception:
+            pass
+    for c in (os.environ.get("ANDROID_HOME"), os.environ.get("ANDROID_SDK_ROOT"),
+              os.path.expanduser("~/Library/Android/sdk"), os.path.expanduser("~/Android/Sdk")):
+        if c and os.path.isdir(os.path.join(c or "", "platform-tools")):
+            return c
+    return None
+
+
+def _kill_appium_port():
+    """Best-effort: stop whatever is listening on the Appium port (macOS/Linux)."""
+    try:
+        pids = subprocess.run(["lsof", "-nP", f"-iTCP:{APPIUM_PORT}", "-sTCP:LISTEN", "-t"],
+                              capture_output=True, text=True, timeout=8).stdout.split()
+        for pid in pids:
+            subprocess.run(["kill", "-9", pid], capture_output=True, timeout=5)
+        if pids:
+            time.sleep(1.5)
+    except Exception:
+        pass
+
+
 def start_appium():
     ap = _detect_appium()
     if not ap:
@@ -238,13 +278,24 @@ def start_appium():
         log("     npm i -g appium  &&  appium driver install uiautomator2")
         log("   continuing WITHOUT Appium — the server will refuse runs until it is up.")
         return None
+
+    root = _android_sdk_root()
+    env = os.environ.copy()
+    if root:
+        env["ANDROID_HOME"] = root
+        env["ANDROID_SDK_ROOT"] = root
+
     if _appium_up():
-        log("✅ Appium already running")
-        return None
+        # An Appium is already listening — but if it was started WITHOUT the SDK
+        # env, uiautomator2 fails with "Neither ANDROID_HOME nor ANDROID_SDK_ROOT
+        # ...". We own Appium here, so restart it with the env to be certain.
+        log("Appium already running — restarting it with the Android SDK env…")
+        _kill_appium_port()
+
     _ensure_uia2_driver(ap)
-    log(f"starting Appium: {ap} --address 0.0.0.0 --port {APPIUM_PORT}")
+    log(f"starting Appium: {ap} --address 0.0.0.0 --port {APPIUM_PORT}  (ANDROID_HOME={root})")
     p = subprocess.Popen([ap, "--address", "0.0.0.0", "--port", str(APPIUM_PORT)],
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env)
     for _ in range(30):
         if _appium_up():
             log("✅ Appium up")
