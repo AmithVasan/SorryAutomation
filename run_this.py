@@ -1263,6 +1263,7 @@ def _run_single_device(run_type="complete", individual_tests=None):
             from utils.alttester_appname import rename_alttester_app
             unity_driver = rename_alttester_app(
                 unity_driver, target_app,
+                device_id=device_id, adb_path=ADB_PATH,
                 host=os.getenv("SAT_ALT_HOST", "127.0.0.1"),
                 port=ALTTESTER_PORT,
             )
