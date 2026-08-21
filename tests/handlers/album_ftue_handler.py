@@ -45,55 +45,55 @@ def handle(unity_driver, driver=None):
     safe_tap(unity_driver, visit_btn)
     time.sleep(2)
 
-    # STEP 2: Tap Card Packs Open Button
+    # STEPS 2-3: Open a card pack. BEST-EFFORT — the card-pack sub-flow varies by
+    # device/build (on some devices the "Card Packs Open" nudge never appears). A
+    # missing sub-step must NOT strand us inside the album with an early return;
+    # we warn and fall through to the recovery below, which reliably returns to
+    # the lobby whether or not these ran.
     logging.info("   2️⃣ Tapping Card Packs Open Button...")
     pack_open_btn = wait_for_safe(unity_driver, By.PATH, PACK_OPEN_BTN, 8)
-    if not pack_open_btn:
-        logging.warning("⚠️ Card Packs Open button not found")
-        return False
-    safe_tap(unity_driver, pack_open_btn)
-    time.sleep(2)
+    if pack_open_btn:
+        safe_tap(unity_driver, pack_open_btn)
+        time.sleep(2)
+    else:
+        logging.warning("⚠️ Card Packs Open button not found — skipping to recovery")
 
-    # STEP 3: Tap Card Screen Pack Open Button
     logging.info("   3️⃣ Tapping Card Screen Pack Open Button...")
     pack_screen_btn = wait_for_safe(unity_driver, By.PATH, PACK_SCREEN_BTN, 8)
-    if not pack_screen_btn:
-        logging.warning("⚠️ Card Screen Pack Open button not found")
-        return False
-    safe_tap(unity_driver, pack_screen_btn)
-    time.sleep(2)
+    if pack_screen_btn:
+        safe_tap(unity_driver, pack_screen_btn)
+        time.sleep(2)
+    else:
+        logging.warning("⚠️ Card Screen Pack Open button not found — continuing")
 
-    # STEP 4: Tap Card Screen Close Button
-    logging.info("   4️⃣ Tapping Card Screen Close Button...")
-    close_btn = wait_for_safe(unity_driver, By.PATH, CLOSE_BTN, 8)
-    if not close_btn:
-        logging.warning("⚠️ Card Screen Close button not found")
-        return False
-    safe_tap(unity_driver, close_btn)
-    time.sleep(2)
-
-    # STEP 5: Handle any random popups before going home
-    logging.info("   5️⃣ Clearing any popups...")
+    # STEP 4: Clear any reward/info popups before navigating out.
+    logging.info("   4️⃣ Clearing any popups...")
     popup_handler.fast_clear_popups(unity_driver)
 
-    # STEP 6: Tap Home Icon to return to lobby
-    logging.info("   6️⃣ Tapping Home Icon → returning to lobby...")
-    end = time.time() + 30
+    # STEP 5: Return to the lobby — robust recovery that works whether or not the
+    # card-pack sub-flow ran. Each pass: dismiss a popup, close the album pack
+    # screen if it's still open (CLOSE_BTN), then try the lobby Home icon.
+    logging.info("   5️⃣ Returning to lobby...")
+    end = time.time() + 40
     while time.time() < end:
         handle_one_popup(unity_driver)
+
+        close_btn = wait_for_safe(unity_driver, By.PATH, CLOSE_BTN, 1)
+        if close_btn:
+            safe_tap(unity_driver, close_btn)
+            time.sleep(1.5)
 
         home_btn = wait_for_safe(unity_driver, By.PATH, HOME_ICON, 2)
         if home_btn:
             safe_tap(unity_driver, home_btn)
             logging.info("   ✅ Back in lobby")
             time.sleep(2)
-            break
+            event_tracker.record("FTUE", "Album FTUE", "PASS")
+            logging.info("✅ Album FTUE completed — resuming script")
+            return True
 
         time.sleep(0.5)
-    else:
-        logging.warning("⚠️ Could not find Home Icon after Album FTUE")
-        return False
 
-    event_tracker.record("FTUE", "Album FTUE", "PASS")
-    logging.info("✅ Album FTUE completed — resuming script")
-    return True
+    logging.warning("⚠️ Could not return to lobby after Album FTUE")
+    event_tracker.record("FTUE", "Album FTUE", "FAIL")
+    return False

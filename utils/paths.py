@@ -346,7 +346,7 @@ CB_COLLECT       = "/Canvas/midUiLayer/cityCompletionScreen/rootMain/collectCTA/
 # Card path segments — assembled dynamically via _cb_card_*() helpers
 _CB_CARDS_BASE   = "/Canvas/uiLayer/btmContent/lobbyBtmContent/buildTray/root/content/header/buildingCards/"
 
-BET_PLAY_BUTTON      = "/Canvas/uiLayer/TableManager/layout/viewPort/content/HomeScreen/buttonsGrp/root/Buttons/playCTA/rootMain/playCTA/TouchArea"
+BET_PLAY_BUTTON      = "/Canvas/uiLayer/TableManager/layout/viewPort/content/HomeScreen/buttonsGrp/root/Buttons/PlayWithModeSelector/rootMain/playCTAmask/root/PlayCTA/TouchArea"
 BET_FTUE_OVERLAY     = "/Canvas/ModalLayer/CommonNudgeModal(Clone)/BGButton"
 BET_CLOSE            = "/Canvas/ModalLayer/betScreenRevamped(Clone)/root/layout/header/cross_button/touchArea"
 
@@ -518,6 +518,39 @@ HF_PUZZLE_ALL_ICON     = "/Canvas/ModalLayer/CommonNudgeModal(Clone)/buttonCTA(C
 HF_PUZZLE_TOTAL_AMMO   = "/Canvas/ModalLayer/PuzzleEventModal(Clone)/Container/footer/PuzzleHUD/layout/root/TextStyle_subText_medium_bold/text"
 HF_PUZZLE_CLOSE        = "/Canvas/ModalLayer/PuzzleEventModal(Clone)/Container/closeButton/closeGrpAnimate/SorryButtonType-Misc/touchArea"
 
+# -----------------------------------------------------------------------
+# PUZZLE THEATRE (PT) — full event-play test (test_15_puzzletheatre)
+# Reuses the HF_PUZZLE_* lobby / FTUE paths above; adds the board / piece /
+# reward paths.  Board count (6 today) and pieces-per-board (4/6/8…) are read
+# adaptively, so nothing here is hard-coded to a specific count.
+# -----------------------------------------------------------------------
+PT_ICON                = HF_PUZZLE_ICON
+PT_FREE_AMMO_MODAL     = "/Canvas/ModalLayer/GenericCommonModal(Clone)/rootMain/layout/baseBg"
+PT_FREE_AMMO_CONTAINER = "/Canvas/ModalLayer/GenericCommonModal(Clone)/rootMain/layout/puzzleEventInnerContent(Clone)/content/rewardArea"
+PT_FREE_AMMO_COUNT     = "/Canvas/ModalLayer/GenericCommonModal(Clone)/rootMain/layout/puzzleEventInnerContent(Clone)/content/rewardArea/BaseRewardInstantiator/root/SpriteRewardItem_42/visualParent/rewardMain/textMain/amountText/text"
+PT_AMMO_CLAIM          = HF_PUZZLE_COLLECT
+PT_FTUE_PIECE          = HF_PUZZLE_PIECE_FTUE
+PT_ALL_PUZZLES_ICON    = HF_PUZZLE_ALL_ICON
+PT_TOTAL_AMMO          = HF_PUZZLE_TOTAL_AMMO
+PT_EVENT_CLOSE         = HF_PUZZLE_CLOSE
+
+PT_MODAL               = "/Canvas/ModalLayer/PuzzleEventModal(Clone)"
+PT_GRAND_REWARD_PANEL  = "/Canvas/ModalLayer/PuzzleEventModal(Clone)/Container/RewardPanel"
+PT_PUZZLE_FRAME        = "/Canvas/ModalLayer/PuzzleEventModal(Clone)/Container/PuzzleBoard/PuzzleFrame"
+PT_ALL_PUZZLE_LAYOUT   = "/Canvas/ModalLayer/PuzzleEventModal(Clone)/Container/AllPuzzle/PuzzlesLayout"
+PT_BOARD_TMPL          = "/Canvas/ModalLayer/PuzzleEventModal(Clone)/Container/AllPuzzle/PuzzlesLayout/PuzzleNumber_{n}"
+PT_PIECE_GROUP         = "/Canvas/ModalLayer/PuzzleEventModal(Clone)/Container/PuzzleBoard/PuzzleFrame/Mask/PuzzlePieces/puzzlePieceGrp"
+PT_PIECE_BTNS          = PT_PIECE_GROUP + "//Btn"      # find_objects → every piece reveal button
+
+# Puzzle-complete AND event-complete share the RewardSummaryModal.
+PT_REWARD_SCREEN       = "/Canvas/ModalLayer/RewardSummaryModal(Clone)/darkBG"
+PT_REWARD_ROOT         = "/Canvas/ModalLayer/RewardSummaryModal(Clone)/rootMain"
+PT_REWARD_COLLECT      = REWARD_SUMMARY_CTA   # .../RewardSummaryModal(Clone)/rootMain/scaleAdjuster/footer/CTA/TouchArea
+
+# Grand (event-completion) reward.
+PT_GRAND_REWARD_SCREEN  = "/Canvas/ModalLayer/PuzzleEventModal(Clone)/Blocker"
+PT_GRAND_REWARD_COLLECT = "/Canvas/ModalLayer/GrandEventStartPopup(Clone)/rootMain/scaleAdjuster/footer/CTA/TouchArea"
+
 # --- Legendary Pawn Sale (icon only — close is PAWN_SALE_CLOSE above) ---
 HF_PAWN_ICON           = "/Canvas/uiLayer/TableManager/layout/viewPort/content/HomeScreen/topSections/lobbyWidgetSection/LHS_RHS_Content/IconsRHS/LegendaryPawnLobbyWidget/scaleAdjuster/root/Overlay Parent/bg"
 
@@ -606,15 +639,15 @@ HF_SOCIAL_TAB_FRIENDS  = "/Canvas/uiLayer/TableManager/layout/viewPort/content/F
 # -----------------------------------------------------------------------
 
 # Lobby → bet screen entry
-GAME_PLAY_BUTTON    = "/Canvas/uiLayer/TableManager/layout/viewPort/content/HomeScreen/buttonsGrp/root/Buttons/playCTA/rootMain/playCTA/TouchArea"
+GAME_PLAY_BUTTON    = "/Canvas/uiLayer/TableManager/layout/viewPort/content/HomeScreen/buttonsGrp/root/Buttons/PlayWithModeSelector/rootMain/playCTAmask/root/PlayCTA/TouchArea"
 
 # Bet screen — Classic mode tab
 # Tap inactiveTab to switch to Classic; if already selected, inactiveTab won't exist
-GAME_BET_CLASSIC_TAB  = "/Canvas/ModalLayer/betScreenRevamped(Clone)/root/layout/content/tabAndContent/tabsHandler/tabs/ScrollParent/scrollView/viewport/content/NormalBetscreenModesTab/inactiveTab"
+GAME_BET_CLASSIC_TAB  = "/Canvas/ModalLayer/betScreenRevamped(Clone)/root/layout/content/tabAndContent/tabsHandler/tabs/ScrollParent/scrollView/viewport/content/NormalBetscreenModesTab/activeTab/gridLayout/Image"
 
 # Bet screen — Fire & Ice mode tab
 # Tap inactiveTab to switch to Fire & Ice (mirrors the Classic tab pattern).
-GAME_BET_FIREICE_TAB  = "/Canvas/ModalLayer/betScreenRevamped(Clone)/root/layout/content/tabAndContent/tabsHandler/tabs/ScrollParent/scrollView/viewport/content/Fire&IceBetscreenModesTab_2/inactiveTab"
+GAME_BET_FIREICE_TAB  = "//Canvas/ModalLayer/betScreenRevamped(Clone)/root/layout/content/tabAndContent/tabsHandler/tabs/ScrollParent/scrollView/viewport/content/Fire&IceBetscreenModesTab_2/inactiveTab/gridLayout/Image"
 
 # Fire & Ice rules screens (Fire Rules and Ice Rules share the same modal paths;
 # both are dismissed by tapping the CTA button — first tap = Fire, second = Ice)
@@ -622,10 +655,10 @@ GAME_FIREICE_RULES_SCREEN = "/Canvas/ModalLayer/FireAndIceInfoModal(Clone)/darkb
 GAME_FIREICE_RULES_CTA    = "/Canvas/ModalLayer/FireAndIceInfoModal(Clone)/rootMain/CTA/TouchArea"
 # Reads the currently-selected mode label (used to confirm Classic is active)
 GAME_BET_MODE        = "/Canvas/ModalLayer/betScreenRevamped(Clone)/root/layout/content/tabAndContent/tabsHandler/tabs/ScrollParent/scrollView/viewport/content/NormalBetscreenModesTab/activeTab/gridLayout/text/TextStyle_Amount_T1_large/text"
-GAME_BET_AMOUNT      = "/Canvas/ModalLayer/betScreenRevamped(Clone)/root/layout/content/tabAndContent/innerContent/pagesAndButtons/buttons/play_button/root/currencyText/text01"
+GAME_BET_AMOUNT      = "/Canvas/ModalLayer/betScreenRevamped(Clone)/root/layout/content/tabAndContent/innerContent/pagesAndButtons/buttons/play_button/root/currencyText/text"
 GAME_BET_PREV        = "/Canvas/ModalLayer/betScreenRevamped(Clone)/root/layout/content/tabAndContent/innerContent/pagesAndButtons/buttons/prev_button/touchArea"
 GAME_BET_NEXT        = "/Canvas/ModalLayer/betScreenRevamped(Clone)/root/layout/content/tabAndContent/innerContent/pagesAndButtons/buttons/next_button/touchArea"
-GAME_BET_PLAY_TEXT   = "/Canvas/ModalLayer/betScreenRevamped(Clone)/root/layout/content/tabAndContent/innerContent/pagesAndButtons/buttons/play_button/root/currencyText/text01"
+GAME_BET_PLAY_TEXT   = "/Canvas/ModalLayer/betScreenRevamped(Clone)/root/layout/content/tabAndContent/innerContent/pagesAndButtons/buttons/play_button/root/currencyText/text"
 GAME_BET_PLAY_BTN    = "/Canvas/ModalLayer/betScreenRevamped(Clone)/root/layout/content/tabAndContent/innerContent/pagesAndButtons/buttons/play_button/TouchArea"
 
 # In-game HUD

@@ -15,9 +15,8 @@ Flow
       • Free  → tap Claim, wait 3 s for animation, next tile
       • Paid  → Google Play purchase, reconnect AltTester,
                 wait 3 s for animation
-                  Smoke   → purchase 1 paid tile then stop
-                  Complete → continue until all tiles done /
-                              complete screen appears
+                  IAP        → buy every paid tile until the complete screen
+                  All others → buy 1 paid tile then stop (smoke/complete/regression)
 6.  Log Ammo Progress AFTER + delta
 7.  Handle complete screen (tap to close) if present
 8.  Close popup
@@ -38,7 +37,7 @@ from utils.google_play_helper import (
 from utils.state_manager import state
 from utils.mongo_helper import get_user_wallet
 from utils.popup_handler import clear_all_popups
-from utils.helpers import fast_text, parse_amount, get_wallet_from_data
+from utils.helpers import fast_text, parse_amount, get_wallet_from_data, get_rewards_from_data
 from utils.paths import (
     HOME_BUTTON,
     HOME_GOLD_TEXT,
@@ -71,20 +70,38 @@ def _read_ammo_progress(unity_driver):
     return fast_text(unity_driver, ES_AMMO_PROGRESS) or "N/A"
 
 
+# The current buyable tile's reward tiles live under slot1's reward container.
+ES_TILE_REWARD_CONTAINER = (
+    "/Canvas/ModalLayer/EndlessSalePopup(Clone)/container/rewardsTrack/root/"
+    "slot1/EndlessSaleRewardPanel/rewardContainer"
+)
+
+
 def _log_tile(unity_driver, tile_num):
     """Log all available info for the current tile."""
-    price     = fast_text(unity_driver, ES_TILE_PRICE)    or "?"
-    reward1   = fast_text(unity_driver, ES_TILE_REWARD_1)
-    reward2   = fast_text(unity_driver, ES_TILE_REWARD_2)
-    ammo      = fast_text(unity_driver, ES_TILE_AMMO)
+    price = fast_text(unity_driver, ES_TILE_PRICE) or "?"
+    ammo  = fast_text(unity_driver, ES_TILE_AMMO)
 
     is_free = price.strip().lower() == "free"
 
     logging.info(f"   🎰 Tile {tile_num}  |  Price: {price}  |  Free: {is_free}")
-    if reward1:
-        logging.info(f"      🎁 Reward 1: {reward1}")
-    if reward2:
-        logging.info(f"      🎁 Reward 2: {reward2}")
+
+    # Rewards: prefer the game data (typed), fall back to the tile's reward paths.
+    try:
+        data = get_rewards_from_data(unity_driver, container=ES_TILE_REWARD_CONTAINER)
+    except Exception:
+        data = []
+    if data:
+        logging.info("      🎁 Rewards: "
+                     + ", ".join(f"{r['type']}={r['amount']}" for r in data))
+    else:
+        reward1 = fast_text(unity_driver, ES_TILE_REWARD_1)
+        reward2 = fast_text(unity_driver, ES_TILE_REWARD_2)
+        if reward1:
+            logging.info(f"      🎁 Reward 1: {reward1}")
+        if reward2:
+            logging.info(f"      🎁 Reward 2: {reward2}")
+
     if ammo:
         logging.info(f"      💣 Ammo in tile: {ammo}")
     else:
@@ -115,15 +132,19 @@ def _log_wallet_comparison(label, gold_ui, gems_ui, wallet_data, wallet_db):
 def test_endless_sale(unity_driver, driver):
     """
     Run the Endless Sale flow.
-    Smoke  → claim all free tiles + buy 1 paid tile, then close.
-    Complete → claim/buy every tile until the complete screen appears.
+    IAP run        → claim all free tiles + buy EVERY paid tile until the
+                     complete screen appears.
+    All other runs → claim all free tiles + buy 1 paid tile, then close
+                     (smoke, complete, regression).
     Returns the (possibly refreshed) unity_driver.
     """
     logging.info("♾️ ── test_07_endless_sale START ──")
 
-    run_type = state.get("run_type") or "complete"
-    is_smoke = run_type == "smoke"
-    logging.info(f"🏃 Run type: {run_type.upper()} — {'buy 1 paid tile only' if is_smoke else 'buy all tiles'}")
+    run_type = (state.get("run_type") or "complete").lower()
+    # Only the IAP run exercises every paid tile. All other runs (smoke,
+    # complete, regression) claim the free tiles and buy a SINGLE paid tile.
+    buy_all = run_type == "iap"
+    logging.info(f"🏃 Run type: {run_type.upper()} — {'buy every paid tile' if buy_all else 'buy 1 paid tile only'}")
 
     # ------------------------------------------------------------------
     # Refresh driver from state if not passed
@@ -191,8 +212,8 @@ def test_endless_sale(unity_driver, driver):
 
         # --------------------------------------------------------------
         # 5. Tile loop
-        #    Complete run → loops until complete screen appears (no cap).
-        #    Smoke run    → stops after 1 paid tile.
+        #    IAP run        → loops until the complete screen appears (buys all).
+        #    All other runs → claim free tiles, buy 1 paid tile, then stop.
         # --------------------------------------------------------------
         paid_bought  = 0
         complete     = False
@@ -250,8 +271,8 @@ def test_endless_sale(unity_driver, driver):
                     ammo_mid = _read_ammo_progress(unity_driver)
                     logging.info(f"   💣 Ammo Progress after purchase: {ammo_mid}")
 
-                if is_smoke:
-                    logging.info("   🚬 Smoke run — stopping after 1 paid tile")
+                if not buy_all:
+                    logging.info(f"   🛑 {run_type.upper()} run — 1 paid tile only, stopping")
                     break
 
                 # Check complete screen right after purchase

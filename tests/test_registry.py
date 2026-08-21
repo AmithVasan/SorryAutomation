@@ -98,4 +98,11 @@ TEST_REGISTRY = [
         "type": ["complete"]
     },
 
+    {
+        "file": "test_15_puzzletheatre.py",
+        "function": "test_puzzle_theatre",
+        "name": "Puzzle Theatre",
+        "type": ["complete"]
+    },
+
 ]

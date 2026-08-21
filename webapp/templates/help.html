@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Help — Automation Runner</title>
+  <style>
+    :root {
+      --bg: #0f1420; --card: #171e2e; --line: #263145; --ink: #e7ecf5;
+      --muted: #9aa7bd; --accent: #4f8cff; --good: #37c26b; --warn: #f0b429; --code: #0b0f18;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--ink);
+      font: 15px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+    .wrap { max-width: 860px; margin: 0 auto; padding: 28px 20px 64px; }
+    a { color: var(--accent); }
+    .top { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 18px; }
+    .back { text-decoration: none; font-weight: 600; }
+    h1 { font-size: 26px; margin: 6px 0 4px; }
+    .lede { color: var(--muted); margin: 0 0 22px; }
+    .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+      padding: 18px 20px; margin: 14px 0; }
+    .card h2 { font-size: 18px; margin: 0 0 10px; display: flex; align-items: center; gap: 8px; }
+    .card h3 { font-size: 15px; margin: 16px 0 6px; }
+    ol, ul { margin: 8px 0; padding-left: 22px; }
+    li { margin: 5px 0; }
+    code, .cmd { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; }
+    .cmd { display: block; background: var(--code); border: 1px solid var(--line); border-radius: 8px;
+      padding: 10px 12px; margin: 8px 0; color: #d6e2ff; overflow-x: auto; white-space: pre; }
+    .pill { display: inline-block; font-size: 12px; font-weight: 700; padding: 2px 8px; border-radius: 999px;
+      background: #22314e; color: #cfe0ff; margin-right: 6px; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 18px; }
+    @media (max-width: 620px) { .grid { grid-template-columns: 1fr; } }
+    .req { display: flex; gap: 10px; align-items: flex-start; }
+    .req .k { color: var(--good); font-weight: 800; }
+    table { width: 100%; border-collapse: collapse; margin: 6px 0; }
+    th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+    th { color: var(--muted); font-weight: 600; font-size: 13px; }
+    .muted { color: var(--muted); }
+    .note { background: #1a2230; border-left: 3px solid var(--warn); border-radius: 6px; padding: 8px 12px; margin: 10px 0; }
+    .foot { color: var(--muted); font-size: 13px; margin-top: 26px; text-align: center; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="top">
+      <a class="back" href="/">← Back to Runner</a>
+      <span class="muted">Quick guide</span>
+    </div>
+
+    <h1>🎮 Automation Runner — how it works</h1>
+    <p class="lede">A short guide for first-time users. No prior setup knowledge needed — if you can plug in a phone and open a browser, you can run the tests.</p>
+
+    <div class="card">
+      <h2>❓ What is this?</h2>
+      <p>The Automation Runner drives automated tests on the <b>Sorry! World</b> game running on a real Android phone. You pick what to run in this web page and click <b>Run</b>; the server does the rest and produces a report. Everything (the test scripts, the game licence, the database) lives on the central server — your laptop just needs a phone plugged in.</p>
+    </div>
+
+    <div class="card">
+      <h2>✅ What you need</h2>
+      <div class="grid">
+        <div class="req"><span class="k">1</span><div><b>An Android test phone</b> — signed in with a test account.</div></div>
+        <div class="req"><span class="k">2</span><div><b>A USB cable</b> to connect the phone to your laptop.</div></div>
+        <div class="req"><span class="k">3</span><div><b>Same network as the server</b> — office Wi-Fi/LAN, or the company VPN if you're working from home.</div></div>
+        <div class="req"><span class="k">4</span><div><b>A web browser</b> — that's how you use this tool.</div></div>
+      </div>
+      <p class="muted" style="margin-top:12px">You do <b>not</b> need to install the test scripts or the game licence — those stay on the server.</p>
+    </div>
+
+    <div class="card">
+      <h2>▶️ Run a test (3 steps)</h2>
+      <ol>
+        <li>At the top of the Runner, choose your <b>Project</b>, a <b>Run type</b> (see below), and the <b>device</b> you want to run on.</li>
+        <li>Click <b>Run</b> (or <b>Run here</b> on your device's row).</li>
+        <li>Watch the <b>live console</b> as it goes. When it finishes, open the <b>Report</b> to see each step and result.</li>
+      </ol>
+      <p class="muted">If several people run at once, each run has its own row and log — you won't block each other (up to the licensed limit).</p>
+    </div>
+
+    <div class="card">
+      <h2>🔌 Add your device from a new laptop</h2>
+      <p>If your phone is plugged into <i>your</i> laptop (not the server), onboard it once:</p>
+      <ol>
+        <li>On the phone, turn on <b>Developer Options → USB debugging</b>, then plug it into your laptop with the USB cable.</li>
+        <li>On your laptop, open the <b>Terminal</b> app (macOS: press <code>Cmd + Space</code>, type “Terminal”, Enter).</li>
+        <li>In the Runner click <b>＋ Add a device</b>, copy the command it shows, paste it into Terminal and press Enter. It looks like:
+          <span class="cmd">curl -fsSL http://&lt;server&gt;:8000/install.sh | bash</span>
+          It sets everything up automatically the first time (it may ask for your Mac password once). <b>Leave that Terminal window open.</b>
+        </li>
+        <li>On the phone, tap <b>“Allow USB debugging”</b> when it pops up.</li>
+        <li>Your device turns <b style="color:var(--good)">green</b> in the Runner — now pick it and click <b>Run here</b>.</li>
+      </ol>
+      <div class="note">Windows users: use the PowerShell command from the same panel instead (<code>irm .../install.ps1 | iex</code>).</div>
+    </div>
+
+    <div class="card">
+      <h2>📄 Your results</h2>
+      <ul>
+        <li><b>Report</b> — an HTML page with every step and pass/fail, named by run type + date/time. Open it from the <b>Report</b> dropdown.</li>
+        <li><b>Screenshots</b> — if the <b>Screenshots</b> toggle is on, each step is captured; download them all with the <b>📸 Screenshots</b> button.</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <h2>🏃 Run types</h2>
+      <table>
+        <tr><th>Type</th><th>What it does</th></tr>
+        <tr><td><span class="pill">smoke</span></td><td>Quick sanity — a few key tests to check the build is healthy.</td></tr>
+        <tr><td><span class="pill">iap</span></td><td>In-app purchase flows — exercises the paid/shop features thoroughly.</td></tr>
+        <tr><td><span class="pill">regression</span></td><td>The broader set — catches things that used to work but broke.</td></tr>
+        <tr><td><span class="pill">complete</span></td><td>Everything — the full feature suite end to end.</td></tr>
+      </table>
+      <p class="muted">You can also run a <b>single test</b> instead of a whole suite from the Single-test dropdown.</p>
+    </div>
+
+    <div class="card">
+      <h2>🛠️ If something goes wrong</h2>
+      <ul>
+        <li><b>Device doesn't turn green / not listed</b> — check the USB cable, make sure you accepted the “Allow USB debugging” prompt on the phone, and that the Add-a-device Terminal window is still open.</li>
+        <li><b>Can't open the Runner page</b> — you must be on the office network or VPN; use the server address your admin gave you (e.g. <code>http://&lt;server&gt;:8000</code>).</li>
+        <li><b>A run fails partway</b> — open its log/report to see the last step; it's often a popup or a screen that changed in a new build. Share the report with the QA team.</li>
+        <li><b>Still stuck</b> — ask the QA/automation admin; they run the server.</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <h2>📖 Glossary</h2>
+      <table>
+        <tr><td><b>Server</b></td><td>The always-on Mac that runs the tests and this web page.</td></tr>
+        <tr><td><b>Bridge / agent</b></td><td>The small helper that runs on your laptop so the server can drive the phone plugged into it.</td></tr>
+        <tr><td><b>AltTester</b></td><td>The tool that lets the tests “see” inside the Unity game screens.</td></tr>
+        <tr><td><b>Appium</b></td><td>The tool that taps and swipes the phone like a user would.</td></tr>
+        <tr><td><b>Report</b></td><td>The results page produced after a run.</td></tr>
+      </table>
+    </div>
+
+    <p class="foot">Automation Runner · internal QA tool. For deeper technical docs, see the <code>docs/</code> folder in the project.</p>
+  </div>
+</body>
+</html>

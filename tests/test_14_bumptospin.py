@@ -57,6 +57,7 @@ from utils.popup_handler import (
 )
 from utils.helpers import (
     fast_text, safe_text, parse_amount, get_wallet_from_data, get_user_snapshot,
+    get_rewards_from_data,
 )
 from utils.mongo_helper import (
     get_user_wallet, get_user_from_db, set_bump_to_spin_ammo,
@@ -146,6 +147,23 @@ def _scan_amounts(unity, container_path):
     return out
 
 
+def _rewards(unity, container_path):
+    """Reward (label, amount) pairs for the reward area currently showing.
+
+    Prefers reading the game's reward components directly via
+    get_rewards_from_data() — returns the reward TYPE name + raw amount, e.g.
+    ("Gold", 1500) — scoped to `container_path`. Falls back to scanning the UI
+    amountText under `container_path` when that returns nothing, so it can only
+    improve the reads, never regress them."""
+    try:
+        data = get_rewards_from_data(unity, container=container_path)
+    except Exception:
+        data = []
+    if data:
+        return [(r["type"], r["amount"]) for r in data]
+    return _scan_amounts(unity, container_path)
+
+
 def _read_progress_pair(unity):
     """Parse the tier-progress tooltip ('910/910') → (num, den, raw)."""
     raw = _text(unity, BTS_PROGRESS, 2) or ""
@@ -200,7 +218,7 @@ def _read_equipped_cosmetic(unity):
 def _handle_free_ammo_ftue(unity):
     """First open shows a free-ammo claim modal — log the amount, claim it."""
     if _present(unity, BTS_FTUE_MODAL, 4) or _present(unity, BTS_FREE_AMMO_MODAL, 2):
-        amounts = _scan_amounts(unity, BTS_FREE_AMMO_CONTAINER)
+        amounts = _rewards(unity, BTS_FREE_AMMO_CONTAINER)
         raw = (", ".join(f"{r}={v}" for r, v in amounts)
                or (fast_text(unity, BTS_FREE_AMMO_COUNT) or "—"))
         logging.info(f"🎁 [BTS] FTUE free ammo: {raw}")
@@ -679,7 +697,7 @@ def _claim_all_tiers(unity):
         for n in slots:
             tp = BTS_TIER_ITEM_TMPL.format(n=n)
             game_tier = (count - n + 1) if count else n   # top slot = highest tier
-            rewards = _scan_amounts(unity, tp)
+            rewards = _rewards(unity, tp)
             if n not in logged:
                 logged.add(n)
                 per_tier[game_tier] = rewards

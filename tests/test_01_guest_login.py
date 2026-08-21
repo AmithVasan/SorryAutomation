@@ -1,13 +1,14 @@
+import os
 import time
 import logging
 import subprocess
 
 from alttester import By, AltDriver
-from utils.mongo_helper import boost_player_level
+from utils.mongo_helper import boost_player_level, get_account_by_device, delete_account_by_device
 from utils.state_manager import state
 from utils.popup_handler import wait_for_safe, safe_tap, handle_one_popup
 from utils.device_helpers import handle_permissions
-from utils.helpers import get_user_snapshot
+from utils.helpers import get_user_snapshot, get_device_id
 from utils.paths import (
     HOME_BUTTON, LOGIN_SCREEN, GUEST_BUTTON,
     FTUE_INTRO_SKIP, FTUE_SKIP_BUTTON,
@@ -50,6 +51,34 @@ def _tap_screen_center():
         ADB_PATH, "-s", device_id,
         "shell", "input", "tap", "540", "1200"
     ])
+
+
+# -----------------------------------------------------------------------
+# LOADING GATE
+# The login screen (/Canvas/midUiLayer/loginScreen) hosts the loading bar and
+# stays on screen until the guest login + initial load finish completely.
+# Searching for the FTUE intro/skip button — or waiting on the FTUE transition
+# animation — while it's still up races the loader: on a slow load the skip
+# search times out and the whole FTUE walkthrough cascades into failures.
+# So gate on this screen first — its disappearance is the reliable "fully
+# loaded" signal — and only then look for FTUE.
+# -----------------------------------------------------------------------
+def wait_for_login_loading_complete(unity_driver, timeout=90):
+    end = time.time() + timeout
+    logged = False
+    while time.time() < end:
+        if not wait_for_safe(unity_driver, By.PATH, LOGIN_SCREEN, 1):
+            if logged:
+                logging.info("✅ Login/loading screen cleared — proceeding to FTUE")
+            return True
+        if not logged:
+            logging.info("⏳ Login/loading screen still up (loading) — waiting before FTUE...")
+            logged = True
+        time.sleep(1)
+    logging.warning(
+        f"⚠️ Login/loading screen still present after {timeout}s — proceeding to FTUE anyway"
+    )
+    return False
 
 
 # -------------------------------
@@ -159,6 +188,11 @@ def reach_home(unity_driver, driver):
 # -----------------------------------------------------------------------
 def handle_new_ftue_flow(unity_driver, driver):
     logging.info("🎬 New FTUE flow detected — starting guided walkthrough")
+
+    # Defensive gate: never wait on the FTUE transition / search the in-game
+    # skip button while the login/loading screen is still up (slow loads race
+    # these searches). Returns immediately once loading has already cleared.
+    wait_for_login_loading_complete(unity_driver)
 
     # -----------------------------------------------------------------------
     # STEP 1 — Intro skip already tapped before this call; wait for the
@@ -349,91 +383,86 @@ def test_guest_login(unity_driver, driver):
     logging.info("🚀 Guest Login Test")
 
     # -------------------------------
-    # LOGIN (if needed)
+    # ACCOUNT MODE — new / existing / auto (chosen in the webapp; env SAT_ACCOUNT_MODE)
+    #   new      → delete any existing account, relaunch, then run the new-user flow
+    #   existing → use the account already on the device (skip the new-user FTUE)
+    #   auto     → existing if an account is present, else new (default; never deletes)
+    # DeviceManager.GetDeviceId() is the stable 1:1 device id; the account lives in
+    # sorry_accounts.accounts (deviceID → gameCode → users → name/level).
     # -------------------------------
-    login = wait_for_safe(
-        unity_driver,
-        By.PATH,
-        LOGIN_SCREEN,
-        5
+    mode = (os.environ.get("SAT_ACCOUNT_MODE") or "auto").strip().lower()
+    try:
+        dev_id = get_device_id(unity_driver)
+    except Exception as _e:
+        dev_id = None
+        logging.warning(f"⚠️ [account] GetDeviceId failed: {_e}")
+    acct = get_account_by_device(dev_id) if dev_id else {"exists": False}
+    exists = bool(acct.get("exists"))
+    logging.info(
+        f"🔑 [account] mode={mode}  deviceId={dev_id or 'unknown'}  "
+        + (f"existing: {acct.get('name')} (L{acct.get('level')}, {acct.get('gameCode')})"
+           if exists else "no existing account")
     )
 
-    if login:
+    if mode == "new" and exists:
+        logging.info(f"🗑️ [account] NEW requested + account exists → deleting {acct.get('gameCode')}, then relaunching")
+        delete_account_by_device(dev_id)
+        # Relaunch so the deletion takes effect — the running client caches the
+        # account, same discipline as the level boost.
+        unity_driver = restart_and_reconnect(driver, unity_driver)
+        exists = False
 
-        logging.info("🔐 Login screen found → tapping Guest")
+    if mode == "existing" and not exists:
+        logging.warning("⚠️ [account] EXISTING requested but no account present — running new-user flow instead")
+    run_existing = exists and mode in ("existing", "auto")
+    logging.info(f"🧭 [account] flow → {'EXISTING-USER (skip FTUE)' if run_existing else 'NEW-USER'}")
 
-        guest = wait_for_safe(
-            unity_driver,
-            By.PATH,
-            GUEST_BUTTON,
-            5
-        )
+    # -------------------------------
+    # EXISTING-USER — the account auto-logs in and boots straight to the lobby:
+    # no login screen, no Guest button, no FTUE / matchmaking / build. Just let
+    # the loading bar clear; reach_home() then clears daily-login + popups.
+    # -------------------------------
+    if run_existing:
+        logging.info("👤 Existing-user flow — booting straight to lobby "
+                     "(skipping guest login + FTUE)")
+        wait_for_login_loading_complete(unity_driver)
 
-        if not guest:
-            raise Exception("❌ Guest button not found")
-
-        guest.tap()
-
-        time.sleep(2)
-
-        # -------------------------------
-        # HANDLE ANDROID PERMISSIONS
-        # -------------------------------
-        from tests.handlers import permissions_handler
-
-        logging.info("🔍 Checking Android permissions...")
-
-        for _ in range(5):
-
-            handled = permissions_handler.handle(
-                unity_driver,
-                driver
-            )
-
-            if not handled:
-                break
-
+    # -------------------------------
+    # NEW-USER — login screen → Guest → Android permissions → new-user FTUE
+    # -------------------------------
+    else:
+        login = wait_for_safe(unity_driver, By.PATH, LOGIN_SCREEN, 5)
+        if login:
+            logging.info("🔐 Login screen found → tapping Guest")
+            guest = wait_for_safe(unity_driver, By.PATH, GUEST_BUTTON, 5)
+            if not guest:
+                raise Exception("❌ Guest button not found")
+            guest.tap()
             time.sleep(2)
 
-        # -------------------------------
-        # NEW FTUE FLOW  (always active)
-        # Wait up to 15s — loading bar takes ~5s before intro appears.
-        # -------------------------------
-        logging.info("🎬 Following new FTUE flow...")
+            from tests.handlers import permissions_handler
+            logging.info("🔍 Checking Android permissions...")
+            for _ in range(5):
+                handled = permissions_handler.handle(unity_driver, driver)
+                if not handled:
+                    break
+                time.sleep(2)
 
-        ftue_skip = wait_for_safe(unity_driver, By.PATH, FTUE_INTRO_SKIP, 15)
-        if ftue_skip:
-            safe_tap(unity_driver, ftue_skip)
-            event_tracker.record("FTUE", "New User FTUE", "PASS")
-            logging.info("✅ FTUE intro skip tapped")
-            time.sleep(1)
+            logging.info("🎬 Following new FTUE flow...")
+            wait_for_login_loading_complete(unity_driver)
+            ftue_skip = wait_for_safe(unity_driver, By.PATH, FTUE_INTRO_SKIP, 15)
+            if ftue_skip:
+                safe_tap(unity_driver, ftue_skip)
+                event_tracker.record("FTUE", "New User FTUE", "PASS")
+                logging.info("✅ FTUE intro skip tapped")
+                time.sleep(1)
+            else:
+                logging.warning(
+                    "⚠️ FTUE intro skip not found — proceeding into FTUE flow anyway"
+                )
+            handle_new_ftue_flow(unity_driver, driver)
         else:
-            logging.warning(
-                "⚠️ FTUE intro skip not found — "
-                "proceeding into FTUE flow anyway"
-            )
-
-        handle_new_ftue_flow(unity_driver, driver)
-
-        # -----------------------------------------------------------------------
-        # OLD FLOW — disabled.  To re-enable: remove the block above and
-        # uncomment everything below (restore is_new_ftue_flow logic too).
-        # -----------------------------------------------------------------------
-        # logging.info("🔍 Detecting login flow (new FTUE vs old)...")
-        # ftue_skip = wait_for_safe(unity_driver, By.PATH, FTUE_INTRO_SKIP, 15)
-        # if ftue_skip:
-        #     logging.info("🎬 New FTUE flow detected — tapping intro skip button")
-        #     safe_tap(unity_driver, ftue_skip)
-        #     event_tracker.record("FTUE", "New User FTUE", "PASS")
-        #     time.sleep(1)
-        #     is_new_ftue_flow = True
-        #     handle_new_ftue_flow(unity_driver, driver)
-        # else:
-        #     logging.info("⚡ Old login flow detected — no FTUE cinematic")
-        # -----------------------------------------------------------------------
-
-    else:
-        logging.info("⚡ Already logged in → skipping login screen")
+            logging.info("⚡ Already logged in → skipping login screen")
 
     # -------------------------------
     # POST-LOGIN: DAILY LOGIN CHECK

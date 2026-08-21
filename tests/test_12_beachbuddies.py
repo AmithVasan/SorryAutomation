@@ -41,7 +41,7 @@ from utils.state_manager import state
 from utils.popup_handler import (
     wait_for_safe, safe_tap, clear_all_popups, close_info_screen,
 )
-from utils.helpers import fast_text, parse_amount, get_wallet_from_data
+from utils.helpers import fast_text, parse_amount, get_wallet_from_data, get_rewards_from_data
 from utils.mongo_helper import get_user_wallet, set_beach_buddies_ammo
 import utils.event_tracker as event_tracker
 from utils.paths import (
@@ -95,6 +95,23 @@ def _text_any(unity, paths, timeout=3, retries=4):
         time.sleep(0.7)
     # last-ditch: return whatever the first path yields (even if empty)
     return _text(unity, paths[0], timeout)
+
+
+# Reward modals — scope the data reader to these so it reads only the reward
+# tiles currently on screen.
+BB_GIFTBOX_MODAL        = "/Canvas/ModalLayer/GiftBoxRewardModal(Clone)"
+BB_REWARD_SUMMARY_MODAL = "/Canvas/ModalLayer/RewardSummaryModal(Clone)"
+
+
+def _rewards_typed(unity, container):
+    """Typed reward (label, amount) tuples read straight from the game data,
+    scoped to `container`. Returns [] if the reader finds nothing, so the caller
+    falls back to its existing amountText read — this can only improve reads."""
+    try:
+        data = get_rewards_from_data(unity, container=container)
+    except Exception:
+        data = []
+    return [(r["type"], r["amount"]) for r in data]
 
 
 def _read_event_ammo(unity):
@@ -411,7 +428,9 @@ def _play_castle(unity, castle_num, summary):
 
         if outcome == "giftbox":
             time.sleep(5)   # giftbox build animation
-            amt      = _text_any(unity, [BB_GIFTBOX_AMOUNT, BB_GIFTBOX_AMOUNT_ANY], 3)
+            typed    = _rewards_typed(unity, BB_GIFTBOX_MODAL)
+            amt      = (", ".join(f"{t}={a}" for t, a in typed)
+                        or _text_any(unity, [BB_GIFTBOX_AMOUNT, BB_GIFTBOX_AMOUNT_ANY], 3))
             cardpack = _present(unity, BB_GIFTBOX_CARDPACK, 2)
             giftbox  = {"amount": amt, "cardpack": cardpack}
             logging.info(
@@ -428,7 +447,9 @@ def _play_castle(unity, castle_num, summary):
 
         if outcome == "milestone":
             time.sleep(2)   # milestone reward animation
-            amt = _text_any(unity, [BB_MILESTONE_AMOUNT, BB_MILESTONE_AMOUNT_ANY], 3)
+            typed = _rewards_typed(unity, BB_REWARD_SUMMARY_MODAL)
+            amt = (", ".join(f"{t}={a}" for t, a in typed)
+                   or _text_any(unity, [BB_MILESTONE_AMOUNT, BB_MILESTONE_AMOUNT_ANY], 3))
             milestone_rewards.append(amt)
             logging.info(
                 f"🏁 [BB] Castle {castle_num} milestone {len(milestone_rewards)} "
@@ -505,8 +526,14 @@ def _handle_event_complete(unity, summary):
     # "—".  Use the retrying reader that skips 0 to catch the settled value.
     # The event-complete screen is a RewardSummaryModal, so the milestone
     # "any amountText" wildcard is a valid fallback for the first reward.
-    r1 = _text_any(unity, [BB_EVENT_COMPLETE_R1, BB_MILESTONE_AMOUNT_ANY], 3)
-    r2 = _text_any(unity, [BB_EVENT_COMPLETE_R2], 3)
+    typed = _rewards_typed(unity, BB_REWARD_SUMMARY_MODAL)
+    if typed:
+        parts = [f"{t}={a}" for t, a in typed]
+        r1 = parts[0] if len(parts) > 0 else None
+        r2 = parts[1] if len(parts) > 1 else None
+    else:
+        r1 = _text_any(unity, [BB_EVENT_COMPLETE_R1, BB_MILESTONE_AMOUNT_ANY], 3)
+        r2 = _text_any(unity, [BB_EVENT_COMPLETE_R2], 3)
     r3_cardpack = _present(unity, BB_EVENT_COMPLETE_R3_CARDPACK, 2)
 
     logging.info("🎉 [BB] EVENT COMPLETE rewards:")

@@ -436,6 +436,13 @@ def index(request: Request):
     )
 
 
+@app.get("/help", response_class=HTMLResponse)
+def help_page(request: Request):
+    """Plain-language guide for first-time users (requirements, how to run,
+    onboard a device, read results). Linked from the header's ❓ Help button."""
+    return templates.TemplateResponse(request, "help.html", {})
+
+
 @app.get("/status")
 def status():
     with _lock:
@@ -530,6 +537,7 @@ def run(
     agent: str = Form(""),             # bridge id → run the scripts on ITS device
     build: str = Form(""),             # APK filename to install/run (blank = latest)
     device: str = Form(""),            # device serial to run on (local runs)
+    account_mode: str = Form("auto"),  # new | existing | auto (guest-login account flow)
 ):
     if project not in _RUNNABLE:
         return JSONResponse(
@@ -623,6 +631,8 @@ def run(
         env = os.environ.copy()
         env["PYTHONUNBUFFERED"] = "1"
         env["SAT_SKIP_BUILD_FETCH"] = "1"
+        # Guest-login account flow: new (delete + fresh) | existing | auto.
+        env["SAT_ACCOUNT_MODE"] = account_mode if account_mode in ("new", "existing", "auto") else "auto"
         # Per-run parallel identity: unique AltTester app-name + Appium systemPort.
         env["SAT_APP_NAME"] = f"sorry{slot}"
         env["SAT_SYSTEM_PORT"] = str(8199 + slot)
@@ -843,9 +853,27 @@ SERVER="__SERVER__"
 echo "== Automation Runner — device bridge setup =="
 echo "   server: $SERVER"
 
+OS="$(uname -s)"
+
+# On macOS, make sure Homebrew is installed first — it's how we bring in adb,
+# Node and Appium below. This is what makes a brand-new Mac work from one
+# command. (One-time; may ask for your Mac password for Homebrew + Xcode tools.)
+if [ "$OS" = "Darwin" ] && ! command -v brew >/dev/null 2>&1; then
+  echo ".. Homebrew not found — installing it (one-time; may prompt for your Mac password)..."
+  NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+  # Put brew on PATH for the rest of this script (Apple Silicon vs Intel).
+  if [ -x /opt/homebrew/bin/brew ]; then eval "$(/opt/homebrew/bin/brew shellenv)"
+  elif [ -x /usr/local/bin/brew ]; then eval "$(/usr/local/bin/brew shellenv)"; fi
+fi
+
 if ! command -v python3 >/dev/null 2>&1; then
-  echo "X  python3 not found. Install Python 3, then re-run this command."
-  exit 1
+  if command -v brew >/dev/null 2>&1; then
+    echo ".. installing Python 3 via Homebrew..."
+    brew install python
+  else
+    echo "X  python3 not found. Install Python 3, then re-run this command."
+    exit 1
+  fi
 fi
 
 if ! command -v adb >/dev/null 2>&1; then

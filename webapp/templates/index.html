@@ -19,6 +19,7 @@
       <div id="device-pill" class="pill pill-free">
         <span class="dot"></span><span id="device-text">Free</span>
       </div>
+      <a href="/help" target="_blank" class="mini-btn" title="How the tool works and what you need — a quick guide for first-time users">❓ Help</a>
     </header>
 
     <form id="run-form" class="form">
@@ -80,6 +81,16 @@
         </select>
       </div>
 
+      <label class="field">
+        <span>Account (guest login)</span>
+        <select name="account_mode" id="account_mode"
+                title="Auto = use the account already on the device, else new. New = delete the device's account first for a fresh new-user run. Existing = use the current account and skip the new-user FTUE.">
+          <option value="auto" selected>Auto — existing if present, else new</option>
+          <option value="new">New user — delete &amp; start fresh</option>
+          <option value="existing">Existing user — use current account</option>
+        </select>
+      </label>
+
       <label class="field hidden">
         <span>Device</span>
         <select name="device" id="device">
@@ -138,7 +149,7 @@
           <button type="button" class="mini-btn" id="copy-cmd" onclick="copyOnboardCmd()">⧉ Copy</button>
         </div>
         <div class="onboard-note">
-          The installer sets up <code>adb</code> + <code>Appium</code> for you (via Homebrew on macOS) — the first run may take a couple of minutes.
+          On a brand-new Mac this <b>sets everything up automatically the first time</b> — Homebrew, <code>adb</code>, and <code>Appium</code> — so nothing needs to be pre-installed. It may ask for your <b>Mac password</b> once (for Homebrew) and take a couple of minutes.
           On the device tap <b>Allow USB debugging</b>; on macOS click <b>Allow</b> if the firewall prompts.
         </div>
         <div id="onboard-status" class="onboard-status">Waiting for your device to appear here…</div>
@@ -267,7 +278,7 @@
     });
     async function loadReports() {
       let list = [];
-      try { list = (await (await fetch('/reports')).json()).reports || []; } catch (e) { return; }
+      try { list = (await (await fetchT('/reports')).json()).reports || []; } catch (e) { return; }
       reportsSelect.innerHTML = '<option value="">🗂 Past reports…</option>' +
         list.map(r => `<option value="${r.name}">${r.name}</option>`).join('');
     }
@@ -306,7 +317,7 @@
     // ── Local (server-connected) devices → rows in the Devices panel ──────────────
     let lastDevSig = null;
     async function loadDevices() {
-      try { localDevices = (await (await fetch('/devices')).json()).devices || []; }
+      try { localDevices = (await (await fetchT('/devices')).json()).devices || []; }
       catch (e) { localDevices = []; }
     }
     const logEl = document.getElementById('log');
@@ -445,11 +456,46 @@
       const m = Math.floor(sec / 60), s = sec % 60;
       return `${m}m ${String(s).padStart(2, '0')}s`;
     }
+    // ── Resilient polling ──────────────────────────────────────────────────────
+    // A webapp restart used to wedge the whole browser: the pollers fired every
+    // ~1.2–1.5s with no timeout and no overlap guard, so requests to the briefly
+    // dead server piled up until every socket was stuck (even other sites stopped
+    // loading). fetchT bounds each request; startPoller never overlaps a tick,
+    // idles while the tab is hidden, backs off while the server is unreachable,
+    // and auto-resumes the moment it returns — no browser relaunch needed.
+    function fetchT(url, opts = {}, ms = 5000) {
+      const ac = new AbortController();
+      const t = setTimeout(() => ac.abort(), ms);
+      return fetch(url, { ...opts, signal: ac.signal }).finally(() => clearTimeout(t));
+    }
+    let serverDown = false;
+    function setReconnecting(down) {
+      if (down === serverDown) return;
+      serverDown = down;
+      if (down) {                      // recovery repaints via the next good pollStatus
+        devicePill.className = 'pill pill-busy';
+        deviceText.textContent = 'reconnecting…';
+      }
+    }
+    function startPoller(fn, baseMs) {
+      let running = false;
+      async function tick() {
+        // never overlap a tick, and don't hammer while the tab is hidden
+        if (running || document.hidden) { setTimeout(tick, baseMs); return; }
+        running = true;
+        let ok = true;
+        try { ok = (await fn()) !== false; } catch (e) { ok = false; }
+        running = false;
+        setTimeout(tick, ok ? baseMs : 4000);   // back off while unreachable
+      }
+      tick();
+    }
+
     async function pollLog() {
       if (viewingHistory || !currentRun) return;
       const myRun = currentRun;   // remember which run this poll is for
       try {
-        const res = await fetch(`/log?run_id=${myRun}&offset=${logOffset}`);
+        const res = await fetchT(`/log?run_id=${myRun}&offset=${logOffset}`);
         if (currentRun !== myRun) return;        // run changed mid-flight → discard
         const text = await res.text();
         if (currentRun !== myRun) return;        // re-check after awaiting body
@@ -460,12 +506,13 @@
           logOffset = newOffset;
           if (autoscroll.checked) logEl.scrollTop = logEl.scrollHeight;
         }
-      } catch (e) { /* transient */ }
+      } catch (e) { return false; }
     }
     async function pollStatus() {
       let s;
-      try { s = await (await fetch('/status')).json(); }
-      catch (e) { return; }   // server not reachable yet
+      try { s = await (await fetchT('/status')).json(); }
+      catch (e) { setReconnecting(true); return false; }   // server down → back off + show reconnecting
+      setReconnecting(false);
       statusRuns = s.runs || [];
       const running = statusRuns.length;
       devicePill.className = 'pill ' + (running ? 'pill-busy' : 'pill-free');
@@ -490,7 +537,7 @@
           const finishing = currentRun;
           await pollLog();   // final pull
           try {
-            const info = await (await fetch('/runinfo?run_id=' + finishing)).json();
+            const info = await (await fetchT('/runinfo?run_id=' + finishing)).json();
             if (currentRun === finishing) {
               const v = info.status === 'passed' ? '✅ Finished'
                       : info.status === 'stopped' ? '■ Stopped' : '❌ Failed';
@@ -509,7 +556,7 @@
     // each a row with its own ▶ Run / ■ Stop. Up to PARALLEL_SLOTS run at once.
     async function loadAgents() {
       let bridges = [];
-      try { bridges = (await (await fetch('/agents')).json()).agents || []; } catch (e) {}
+      try { bridges = (await (await fetchT('/agents')).json()).agents || []; } catch (e) {}
       if (onboardOpen) updateOnboardStatus(bridges);
       const box = document.getElementById('agents');
       const rows = [];
@@ -829,8 +876,8 @@
       });
     }
 
-    setInterval(pollStatus, 1500);
-    setInterval(pollLog, 1200);
+    startPoller(pollStatus, 1500);
+    startPoller(pollLog, 1200);
     pollStatus();
     loadHistory();
     loadBranches();

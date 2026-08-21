@@ -8,11 +8,15 @@ from pymongo import MongoClient
 MONGO_URI = os.environ.get("MONGO_URI")
 DB_NAME = "sorry_users"
 COLLECTION_NAME = "users"
+# Device↔account map (1:1 by deviceID); links to users via gameCode.
+ACCOUNTS_DB = "sorry_accounts"
+ACCOUNTS_COLLECTION = "accounts"
 
 # -------------------------------
 # SHARED CLIENT
 # -------------------------------
 _client = None
+
 
 def get_client():
     global _client
@@ -132,6 +136,79 @@ def get_user_wallet(player_id):
     except Exception as e:
         logging.error(f"❌ Mongo error in get_user_wallet: {e}")
         return {}
+
+
+# -------------------------------
+# ACCOUNT BY DEVICE (READ-ONLY)
+# -------------------------------
+def get_account_by_device(device_id):
+    """Given a device id (from DeviceManager.GetDeviceId()), find the account
+    tied to it. The device→account link lives in sorry_accounts.accounts (1:1 by
+    `deviceID`); name/level come from sorry_users.users via `info.gameCode`.
+
+    Returns a dict:
+        {"exists": bool, "device_id": ..., "gameCode": ..., "userID": ...,
+         "name": ..., "level": ...}
+    Read-only. Never raises.
+    """
+    if not device_id:
+        return {"exists": False, "device_id": device_id}
+    try:
+        client = get_client()
+        acc = client[ACCOUNTS_DB][ACCOUNTS_COLLECTION].find_one({"deviceID": device_id})
+        if not acc:
+            logging.info(f"👤 No account for device {device_id} — new-user only")
+            return {"exists": False, "device_id": device_id}
+        gc = acc.get("gameCode")
+        user = client[DB_NAME][COLLECTION_NAME].find_one({"info.gameCode": gc}) or {}
+        name = (user.get("info") or {}).get("name")
+        level = (user.get("pipPrgrsn") or {}).get("lvl")
+        logging.info(f"👤 Account for device {device_id}: gameCode={gc} name={name} level={level}")
+        return {"exists": True, "device_id": device_id, "gameCode": gc,
+                "userID": acc.get("userID"), "name": name, "level": level}
+    except Exception as e:
+        logging.error(f"❌ Mongo error in get_account_by_device: {e}")
+        return {"exists": False, "device_id": device_id, "error": str(e)}
+
+
+# -------------------------------
+# DELETE ACCOUNT BY DEVICE  (for the "New user" flow)
+# -------------------------------
+def delete_account_by_device(device_id, delete_user_doc=False):
+    """Delete the account tied to a device — mirrors the manual 'Delete Document'
+    on sorry_accounts.accounts (matched by `deviceID`). BACKS UP the doc to the
+    log first so a mistake is recoverable. `delete_user_doc=False` by default to
+    match the manual accounts-only delete (the old users doc simply orphans, as
+    it does today); pass True to also remove the linked sorry_users.users doc.
+
+    IMPORTANT: after calling this, RELAUNCH the game (force-stop + restart), or
+    the still-running client keeps the old account — same discipline as boosting.
+
+    Returns {"deleted": bool, "gameCode": ..., "backup": <doc>}. Never raises.
+    """
+    if not device_id:
+        return {"deleted": False, "reason": "no device_id"}
+    try:
+        client = get_client()
+        acc_col = client[ACCOUNTS_DB][ACCOUNTS_COLLECTION]
+        acc = acc_col.find_one({"deviceID": device_id})
+        if not acc:
+            logging.info(f"🗑️ No account to delete for device {device_id}")
+            return {"deleted": False, "reason": "no account"}
+        gc = acc.get("gameCode")
+        logging.info(f"🗄️ [delete] backup (accounts) before delete: {acc}")
+        user_backup = None
+        if delete_user_doc and gc:
+            user_backup = client[DB_NAME][COLLECTION_NAME].find_one({"info.gameCode": gc})
+        acc_col.delete_one({"_id": acc["_id"]})
+        logging.info(f"🗑️ [delete] removed sorry_accounts.accounts for device {device_id} (gameCode={gc})")
+        if delete_user_doc and gc:
+            res = client[DB_NAME][COLLECTION_NAME].delete_one({"info.gameCode": gc})
+            logging.info(f"🗑️ [delete] removed users doc gameCode={gc} (n={res.deleted_count})")
+        return {"deleted": True, "gameCode": gc, "backup": acc, "user_backup": user_backup}
+    except Exception as e:
+        logging.error(f"❌ Mongo error in delete_account_by_device: {e}")
+        return {"deleted": False, "error": str(e)}
 
 
 # -------------------------------
@@ -276,6 +353,58 @@ def set_bump_to_spin_ammo(player_id, ammo=500):
 
 
 # -------------------------------
+# PUZZLE THEATRE (PT) — TOP UP EVENT AMMO
+# -------------------------------
+def set_puzzle_theatre_ammo(player_id, ammo=5000):
+    """
+    Set the Puzzle Theatre (Puzzle Event) available ammo for a player.
+
+    Writes puzzleEventData.ammoBalance so there is enough ammo to reveal every
+    puzzle piece across all boards.  Call this after closing the event to the
+    lobby, then re-open the event so the boosted balance is picked up.
+
+    Returns True on success, False otherwise.
+    """
+    if not player_id:
+        logging.warning("⚠️ set_puzzle_theatre_ammo called with empty player_id")
+        return False
+
+    try:
+        db = get_client()[DB_NAME]
+        collection = db[COLLECTION_NAME]
+
+        user = collection.find_one({"info.gameCode": player_id})
+        old_ammo = (
+            user.get("puzzleEventData", {}).get("ammoBalance", 0) if user else 0
+        )
+
+        result = collection.update_one(
+            {"info.gameCode": player_id},
+            {"$set": {"puzzleEventData.ammoBalance": ammo}},
+        )
+
+        if result.matched_count == 0:
+            logging.warning(f"⚠️ Player {player_id} not found — cannot set PT ammo")
+            return False
+
+        logging.info(
+            f"🎭 Puzzle Theatre ammo set → puzzleEventData.ammoBalance: "
+            f"{old_ammo} → {ammo} (player {player_id})"
+        )
+        return True
+
+    except Exception as e:
+        logging.error(f"❌ Mongo error in set_puzzle_theatre_ammo: {e}")
+        return False
+
+
+def get_puzzle_theatre_ammo(player_id):
+    """Return puzzleEventData.ammoBalance from the DB (authoritative), or None."""
+    doc = get_user_from_db(player_id) or {}
+    return (doc.get("puzzleEventData") or {}).get("ammoBalance")
+
+
+# -------------------------------
 # GET USER SNAPSHOT (OPTIONAL)
 # -------------------------------
 def get_user_from_db(player_id):
@@ -293,6 +422,7 @@ def get_user_from_db(player_id):
     except Exception as e:
         logging.error(f"❌ Mongo error in get_user_from_db: {e}")
         return None
+
     
 # -------------------------------
 # UNLOCK SEASON PASS

@@ -88,6 +88,192 @@ def get_wallet_from_data(unity_driver):
     return {"gold": gold, "gems": gems, "pips": pips}
 
 
+# -----------------------------------------------------------------------
+# REWARDS FROM DATA
+# Reads the rewards a screen is showing straight from the game's reward
+# components (BaseRewardItem.GetRewardAmount() / GetRewardTypeId()) via
+# AltTester — instead of scraping the UI amount text (which is formatted
+# like "1.2K" and depends on element paths). Same technique as
+# get_wallet_from_data(). Never raises — returns [] on any failure.
+# -----------------------------------------------------------------------
+
+# Game RewardType enum → readable name (from BaseRewardItem's RewardType).
+REWARD_TYPES = {
+    0: "None", 1: "Gold", 2: "Pip", 3: "Gem", 4: "Shield", 5: "Attack",
+    6: "SeasonBonusPass", 7: "SeasonPoints", 8: "PipnSlidePoints",
+    9: "PipPursuitPoints", 10: "XP", 11: "FeatureUnlock", 12: "Trophy",
+    13: "LeaguePoints", 15: "CosmeticPawn", 16: "CardPack",
+    17: "BumpToSpinRoyalPass", 18: "BumpToSpinAmmo", 19: "EOCPointsReward",
+    20: "Frame", 21: "Steal", 22: "PuzzleEventAmmo", 23: "DuelPoints",
+    24: "GeneralPawn", 25: "CosmeticLootbox", 26: "FortuneIslandAmmo",
+    27: "CoOpEventAmmo", 28: "PiggyBank",
+}
+
+
+_reward_diag_logged = False   # one-shot diagnostic guard (per process)
+
+
+def _reward_call(obj, method, assembly, comp_name):
+    """Call one BaseRewardItem getter on a reward-item object. Returns int or None."""
+    try:
+        return int(obj.call_component_method(comp_name, method, assembly, [], []))
+    except Exception:
+        return None
+
+
+def _reward_component_pairs(item, component, assembly):
+    """Candidate (component, assembly) pairs to call the getter with — discovered
+    from the tile's own components first (so a differently-named or differently-
+    housed reward class still works), then the sensible defaults."""
+    pairs = []
+    try:
+        for c in (item.get_all_components() or []):
+            cn = c.get("componentName") if isinstance(c, dict) else getattr(c, "componentName", None)
+            an = c.get("assemblyName") if isinstance(c, dict) else getattr(c, "assemblyName", None)
+            if cn and "Reward" in cn.split(".")[-1]:
+                asm = an or assembly
+                for nm in (cn, cn.split(".")[-1]):   # full (namespaced) first, then short
+                    if (nm, asm) not in pairs:
+                        pairs.append((nm, asm))
+    except Exception:
+        pass
+    for p in [(component, assembly), ("BaseRewardItem", assembly)]:
+        if p not in pairs:
+            pairs.append(p)
+    return pairs
+
+
+def get_rewards_from_data(unity_driver, component="SpriteRewardItem",
+                          assembly="Assembly-CSharp", name_hint="RewardItem",
+                          container=None):
+    """Return the rewards currently shown, read from the game's data layer:
+
+        [{"type": "Gold", "type_id": 1, "amount": 1000}, ...]
+
+    When `container` (a screen's root path) is given, the search is SCOPED to
+    reward tiles under it, so tiles on background/other panels aren't picked up.
+    Otherwise it searches globally (by component, else by GameObject name
+    containing `name_hint`). The tile component is namespaced (e.g.
+    `Scripts.SpriteRewardItem`), so both the namespaced and short names are
+    tried for the find and the getter call. Reads via
+    BaseRewardItem.GetRewardAmount()/GetRewardTypeId(). Never raises → [].
+    """
+    global _reward_diag_logged
+
+    items = []
+    if container:
+        # Scoped to this screen only. `@component` needs the name AltTester sees;
+        # try the namespaced form (Scripts.*) and the short form.
+        for comp in ("Scripts." + component, component):
+            try:
+                items = unity_driver.find_objects(
+                    By.PATH, f"{container}//*[@component={comp}]") or []
+            except Exception:
+                items = []
+            if items:
+                break
+    else:
+        try:
+            items = unity_driver.find_objects(By.COMPONENT, component) or []
+        except Exception:
+            items = []
+        if not items:                               # component name may differ from GameObject name
+            try:
+                items = unity_driver.find_objects_which_contain(By.NAME, name_hint) or []
+            except Exception:
+                items = []
+    if not items:
+        logging.info("🎁 Rewards (Data): — (no reward tiles found)")
+        return []
+
+    pairs = _reward_component_pairs(items[0], component, assembly)
+
+    def _read(obj, method):
+        for cn, an in pairs:
+            v = _reward_call(obj, method, an, cn)
+            if v is not None:
+                return v
+        return None
+
+    out = []
+    for it in items:
+        amount = _read(it, "GetRewardAmount")
+        type_id = _read(it, "GetRewardTypeId")
+        if amount is None and type_id is None:
+            continue
+        out.append({
+            "type": REWARD_TYPES.get(type_id, str(type_id)),
+            "type_id": type_id,
+            "amount": amount,
+        })
+
+    # One-shot diagnostic: tiles found but nothing read → capture the actual error
+    # from the getter call. A 'MethodNotFoundException' here means the build with
+    # GetRewardAmount/GetRewardTypeId isn't on the device yet.
+    if not out and not _reward_diag_logged:
+        _reward_diag_logged = True
+        try:
+            comps = [(c.get("componentName") if isinstance(c, dict) else str(c))
+                     for c in (items[0].get_all_components() or [])]
+        except Exception:
+            comps = ["<get_all_components failed>"]
+        err = "?"
+        try:
+            items[0].call_component_method(pairs[0][0], "GetRewardAmount",
+                                           pairs[0][1], [], [])
+            err = "(call succeeded but value unreadable)"
+        except Exception as e:
+            err = f"{type(e).__name__}: {str(e)[:300]}"
+        logging.warning(
+            f"⚠️ [rewards] found {len(items)} tile(s) but couldn't read amount/type. "
+            f"Components: {comps}. Tried {pairs}. GetRewardAmount() → {err}"
+        )
+
+    logging.info(
+        "🎁 Rewards (Data): "
+        + (", ".join(f"{r['type']}={r['amount']}" for r in out) if out else "—")
+    )
+    return out
+
+
+def get_device_id(unity_driver):
+    """Read the game's device id via DeviceManager.GetDeviceId() (Unity) — the
+    stable 1:1 id used to key accounts (sorry_accounts.accounts.deviceID). Tries
+    a static call first, then an instance method on a DeviceManager component,
+    across the likely class-name / assembly variants. Returns the id or None."""
+    classes = ("DeviceManager", "Scripts.DeviceManager")
+    assemblies = ("Assembly-CSharp", "Scripts")
+
+    def _ok(v):
+        return v is not None and str(v).strip() not in ("", "0", "null", "None")
+
+    # static
+    for cls in classes:
+        for asm in assemblies:
+            try:
+                r = unity_driver.call_static_method(cls, "GetDeviceId", asm, [], [])
+                if _ok(r):
+                    return str(r).strip()
+            except Exception:
+                pass
+    # instance (component / singleton)
+    for cls in classes:
+        try:
+            obj = unity_driver.find_object(By.COMPONENT, cls)
+        except Exception:
+            obj = None
+        if not obj:
+            continue
+        for asm in assemblies:
+            try:
+                r = obj.call_component_method(cls, "GetDeviceId", asm, [], [])
+                if _ok(r):
+                    return str(r).strip()
+            except Exception:
+                pass
+    return None
+
+
 def get_user_snapshot(unity_driver):
     logging.info("📸 Capturing user snapshot...")
 

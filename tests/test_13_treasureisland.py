@@ -46,6 +46,7 @@ from utils.popup_handler import (
 )
 from utils.helpers import (
     fast_text, safe_text, parse_amount, get_wallet_from_data, get_user_snapshot,
+    get_rewards_from_data,
 )
 from utils.mongo_helper import get_user_wallet, set_treasure_island_ammo
 from utils.driver_manager import connect_altunity
@@ -134,9 +135,26 @@ def _scan_amounts(unity, container_path):
     return out
 
 
+def _rewards(unity, container_path):
+    """Reward (label, amount) pairs for a reward container currently showing.
+
+    Prefers reading the game's reward components directly via
+    get_rewards_from_data() — returns the reward TYPE name + raw amount, e.g.
+    ("Gold", 1500) or ("FortuneIslandAmmo", 3) — scoped to `container_path`.
+    Falls back to scanning the UI amountText under `container_path` when that
+    returns nothing, so it can only improve the reads, never regress them."""
+    try:
+        data = get_rewards_from_data(unity, container=container_path)
+    except Exception:
+        data = []
+    if data:
+        return [(r["type"], r["amount"]) for r in data]
+    return _scan_amounts(unity, container_path)
+
+
 def _pull_rewards(unity, container_path, label):
     """Scan a persistent reward container and log its amounts."""
-    out = _scan_amounts(unity, container_path)
+    out = _rewards(unity, container_path)
     if out:
         logging.info(f"   🎁 [TI] {label}: " + ", ".join(f"{r}={v}" for r, v in out))
     else:
@@ -159,7 +177,7 @@ def _pull_kitty(unity, attempts=3):
                 safe_tap(unity, tap)
             except Exception:
                 pass
-        out = _scan_amounts(unity, TI_KITTY_CONTAINER)   # read within the tooltip window
+        out = _rewards(unity, TI_KITTY_CONTAINER)   # read within the tooltip window
         if out:
             logging.info("   🎒 [TI] Kitty bag: " + ", ".join(f"{r}={v}" for r, v in out))
             return out
